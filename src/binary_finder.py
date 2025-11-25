@@ -206,11 +206,10 @@ class BinaryFinder:
     def format_font_path_for_ffmpeg(self, font_path: str) -> str:
         """Format font path for use in FFmpeg filter (handles Windows paths)."""
         if self.system == "Windows":
-            # FFmpeg on Windows needs special escaping
-            # C:\Windows\Fonts\arial.ttf -> C\\:/Windows/Fonts/arial.ttf
+            # On Windows, just replace backslashes with forward slashes
+            # We rely on single-quotes in the filter string to handle the path correctly.
+            # C:\Windows\Fonts\arial.ttf -> C:/Windows/Fonts/arial.ttf
             path = font_path.replace("\\", "/")
-            if len(path) > 1 and path[1] == ":":
-                path = path[0] + "\\\\:" + path[2:]
             return path
         return font_path
 
