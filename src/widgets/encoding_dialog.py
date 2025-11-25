@@ -1,7 +1,7 @@
 """Encoding dialog with progress and log display."""
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict
 import os
 
 from PyQt6.QtWidgets import (
@@ -14,6 +14,21 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from ..settings import get_settings
 from ..ffmpeg_encoder import get_ffmpeg_encoder, EncodingProgress
 from ..video_validator import get_video_validator
+
+
+class EncoderLoader(QThread):
+    """Worker thread for loading encoders."""
+    
+    encoders_loaded = pyqtSignal(list)
+    
+    def __init__(self, encoder_instance):
+        super().__init__()
+        self.encoder = encoder_instance
+        
+    def run(self):
+        """Load encoders."""
+        encoders = self.encoder.get_available_encoders()
+        self.encoders_loaded.emit(encoders)
 
 
 class EncodingWorker(QThread):
@@ -109,6 +124,7 @@ class EncodingDialog(QDialog):
         self.encoder = get_ffmpeg_encoder()
         self.validator = get_video_validator()
         self._worker: Optional[EncodingWorker] = None
+        self._loader: Optional[EncoderLoader] = None
         self._is_encoding = False
         
         self.setWindowTitle("Encode Video Comparison")
@@ -117,7 +133,7 @@ class EncodingDialog(QDialog):
         
         self._setup_ui()
         self._load_settings()
-        self._update_encoder_options()
+        self._start_encoder_loading()
     
     def _setup_ui(self):
         """Setup dialog UI."""
@@ -331,17 +347,30 @@ class EncodingDialog(QDialog):
         if output_path:
             self.settings.set("last_output_dir", str(Path(output_path).parent))
     
-    def _update_encoder_options(self):
-        """Update encoder combo box with available encoders."""
+    def _start_encoder_loading(self):
+        """Start background thread to load encoders."""
+        self.encoder_combo.clear()
+        self.encoder_combo.addItem("Loading encoders...", "cpu")
+        self.encoder_combo.setEnabled(False)
+        self.encode_btn.setEnabled(False)
+        
+        self._loader = EncoderLoader(self.encoder)
+        self._loader.encoders_loaded.connect(self._on_encoders_loaded)
+        self._loader.start()
+    
+    def _on_encoders_loaded(self, encoders: List[Dict[str, str]]):
+        """Handle encoders loaded event."""
         self.encoder_combo.clear()
         
         # Add auto option
         self.encoder_combo.addItem("Auto (Best Available)", "auto")
         
         # Add available encoders
-        encoders = self.encoder.get_available_encoders()
         for enc in encoders:
             self.encoder_combo.addItem(enc["name"], enc["id"])
+        
+        self.encoder_combo.setEnabled(True)
+        self.encode_btn.setEnabled(True)
         
         # Set saved encoder if available
         saved_encoder = self.settings.get("encoder")
@@ -351,6 +380,11 @@ class EncodingDialog(QDialog):
                 break
         
         # Connect signal to show/hide CPU preset
+        # Disconnect first to avoid multiple connections if reloaded (though unlikely here)
+        try:
+            self.encoder_combo.currentIndexChanged.disconnect(self._on_encoder_changed)
+        except TypeError:
+            pass
         self.encoder_combo.currentIndexChanged.connect(self._on_encoder_changed)
         self._on_encoder_changed()
     
@@ -507,4 +541,3 @@ class EncodingDialog(QDialog):
                 event.ignore()
         else:
             event.accept()
-

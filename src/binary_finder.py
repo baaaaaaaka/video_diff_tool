@@ -7,6 +7,7 @@ import subprocess
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class BinaryFinder:
@@ -158,23 +159,42 @@ class BinaryFinder:
             hw_encoder_info = {
                 "hevc_videotoolbox": {"name": "VideoToolbox (macOS)", "os": "Darwin"},
                 "hevc_nvenc": {"name": "NVENC (NVIDIA)", "os": "all"},
-                "hevc_amf": {"name": "AMF (AMD)", "os": "Windows"},
                 "hevc_qsv": {"name": "QuickSync (Intel)", "os": "all"},
                 "hevc_vaapi": {"name": "VAAPI (Linux)", "os": "Linux"},
+                "hevc_amf": {"name": "AMF (AMD)", "os": "Windows"},
             }
             
+            potential_encoders = []
             for encoder, info in hw_encoder_info.items():
                 if info["os"] != "all" and info["os"] != self.system:
                     continue
                     
                 # Check if encoder is in the output
                 if re.search(rf'\s{encoder}\s', output):
-                    # Verify if it actually works (hardware is present)
-                    if self._check_encoder_usability(ffmpeg_path, encoder):
-                        encoders.append({
-                            "id": encoder,
-                            "name": info["name"],
-                        })
+                    potential_encoders.append((encoder, info))
+            
+            # Check usability in parallel
+            usable_results = {}
+            with ThreadPoolExecutor() as executor:
+                future_to_encoder = {
+                    executor.submit(self._check_encoder_usability, ffmpeg_path, enc): enc
+                    for enc, info in potential_encoders
+                }
+                
+                for future in as_completed(future_to_encoder):
+                    enc_id = future_to_encoder[future]
+                    try:
+                        usable_results[enc_id] = future.result()
+                    except Exception:
+                        usable_results[enc_id] = False
+            
+            # Re-populate encoders list preserving preference order
+            for enc, info in potential_encoders:
+                if usable_results.get(enc, False):
+                    encoders.append({
+                        "id": enc,
+                        "name": info["name"],
+                    })
         
         except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError):
             pass
@@ -186,14 +206,14 @@ class BinaryFinder:
         """Check if an encoder is actually usable on the system."""
         try:
             # Run a minimal encoding test: 1 frame of black color
-            # Use 128x128 to satisfy alignment requirements of some HW encoders
+            # Use 256x256 to satisfy alignment requirements of some HW encoders (128x128 is too small for some NVENC)
             # Explicitly set pixel format to yuv420p (universally supported fallback)
             cmd = [
                 ffmpeg_path,
                 "-y",
                 "-v", "error",
                 "-f", "lavfi",
-                "-i", "color=black:s=128x128:r=1",
+                "-i", "color=black:s=256x256:r=1",
                 "-c:v", encoder,
                 "-pix_fmt", "yuv420p",
                 "-profile:v", "main",
@@ -265,4 +285,3 @@ def get_binary_finder() -> BinaryFinder:
     if _finder_instance is None:
         _finder_instance = BinaryFinder()
     return _finder_instance
-
