@@ -285,7 +285,7 @@ class FFmpegEncoder:
                 "-tune", "hq",
                 "-rc", "constqp",
                 "-qp", str(qp),
-                "-profile:v", "main444",  # For YUV444 support
+                "-profile:v", "rext",  # Use rext for 4:4:4 support (main444 not always available)
                 "-pix_fmt", "yuv444p",
                 "-tag:v", "hvc1",
             ])
@@ -308,7 +308,7 @@ class FFmpegEncoder:
             cmd.extend([
                 "-c:v", "hevc_qsv",
                 "-preset", "veryslow",  # Highest quality
-                "-global_quality", str(qp),
+                "-q:v", str(qp),        # Use CQP (Quantization Parameter)
                 "-profile:v", "main",
                 "-pix_fmt", "yuv420p",  # QSV HEVC doesn't support 444
                 "-tag:v", "hvc1",

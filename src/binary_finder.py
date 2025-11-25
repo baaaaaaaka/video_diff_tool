@@ -169,16 +169,51 @@ class BinaryFinder:
                     
                 # Check if encoder is in the output
                 if re.search(rf'\s{encoder}\s', output):
-                    encoders.append({
-                        "id": encoder,
-                        "name": info["name"],
-                    })
+                    # Verify if it actually works (hardware is present)
+                    if self._check_encoder_usability(ffmpeg_path, encoder):
+                        encoders.append({
+                            "id": encoder,
+                            "name": info["name"],
+                        })
         
         except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError):
             pass
         
         self._hw_encoders_cache = encoders
         return encoders
+    
+    def _check_encoder_usability(self, ffmpeg_path: str, encoder: str) -> bool:
+        """Check if an encoder is actually usable on the system."""
+        try:
+            # Run a minimal encoding test: 1 frame of black color
+            # Use -f null - to discard output
+            cmd = [
+                ffmpeg_path,
+                "-v", "error",
+                "-f", "lavfi",
+                "-i", "color=black:s=64x64:r=1",
+                "-c:v", encoder,
+                "-frames:v", "1",
+                "-f", "null",
+                "-"
+            ]
+            
+            # On Windows, suppress console window
+            startupinfo = None
+            if self.system == "Windows":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=5,
+                startupinfo=startupinfo
+            )
+            
+            return result.returncode == 0
+        except Exception:
+            return False
     
     def validate_binary(self, path: str, binary_type: str) -> Tuple[bool, str]:
         """Validate a binary by running a version check."""
