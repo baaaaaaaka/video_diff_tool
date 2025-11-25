@@ -46,8 +46,8 @@ class Settings:
         # Window geometry
         "window_x": 100,
         "window_y": 100,
-        "window_width": 900,
-        "window_height": 700,
+        "window_width": 1000,
+        "window_height": 800,
     }
     
     # Resolution presets
