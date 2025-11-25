@@ -16,6 +16,7 @@ class Settings:
         "title_left": "Candidate",
         "title_right": "Baseline",
         "title_third": "",
+        "show_titles": True,
         
         # Third video
         "enable_third_video": False,

@@ -2,13 +2,15 @@
 
 from pathlib import Path
 from typing import Optional
+import threading
+import subprocess
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QGroupBox, QCheckBox, QMessageBox, QStatusBar,
     QApplication
 )
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, pyqtSignal
 from PyQt6.QtGui import QAction, QIcon
 
 from .settings import get_settings
@@ -22,11 +24,17 @@ from .widgets.settings_dialog import SettingsDialog
 class MainWindow(QMainWindow):
     """Main application window."""
     
+    # Signal to show MPV error dialog from background thread
+    mpv_error_signal = pyqtSignal(str, str)
+    
     def __init__(self):
         super().__init__()
         self.settings = get_settings()
         self.finder = get_binary_finder()
         self.mpv_launcher = get_mpv_launcher()
+        
+        # Connect error signal
+        self.mpv_error_signal.connect(self._show_mpv_error)
         
         self.setWindowTitle("Video Diff Tool")
         self._setup_ui()
@@ -145,7 +153,7 @@ class MainWindow(QMainWindow):
         third_video_container = QVBoxLayout()
         
         # Checkbox to enable third video
-        self.enable_third_cb = QCheckBox("Enable Third Video (Bottom Right)")
+        self.enable_third_cb = QCheckBox("Enable Third Video")
         self.enable_third_cb.setChecked(self.settings.get("enable_third_video"))
         self.enable_third_cb.stateChanged.connect(self._on_third_video_toggle)
         self.enable_third_cb.setStyleSheet("""
@@ -160,6 +168,19 @@ class MainWindow(QMainWindow):
             }
         """)
         third_video_container.addWidget(self.enable_third_cb)
+        
+        # Checkbox to show/hide titles (useful if MPV crashes due to missing drawtext)
+        self.show_titles_cb = QCheckBox("Show Titles")
+        self.show_titles_cb.setChecked(True)
+        self.show_titles_cb.setToolTip("Uncheck this if MPV fails to launch due to missing font filters")
+        self.show_titles_cb.setStyleSheet("""
+            QCheckBox {
+                font-size: 13px;
+                color: #555;
+                padding: 5px;
+            }
+        """)
+        third_video_container.addWidget(self.show_titles_cb)
         
         # Third video drop zone
         self.video_third = VideoDropZone(
@@ -339,6 +360,7 @@ class MainWindow(QMainWindow):
         self.video_left.set_title(self.settings.get("title_left"))
         self.video_right.set_title(self.settings.get("title_right"))
         self.video_third.set_title(self.settings.get("title_third"))
+        self.show_titles_cb.setChecked(self.settings.get("show_titles"))
     
     def _save_settings(self):
         """Save current state to settings."""
@@ -358,6 +380,7 @@ class MainWindow(QMainWindow):
         self.settings.set("title_left", self.video_left.get_title())
         self.settings.set("title_right", self.video_right.get_title())
         self.settings.set("title_third", self.video_third.get_title())
+        self.settings.set("show_titles", self.show_titles_cb.isChecked())
         
         # Third video enabled
         self.settings.set("enable_third_video", self.enable_third_cb.isChecked())
@@ -444,6 +467,44 @@ class MainWindow(QMainWindow):
         
         self.status_bar.showMessage(" | ".join(status_parts))
     
+    def _monitor_mpv_process(self, proc: subprocess.Popen):
+        """Monitor MPV process for immediate startup errors."""
+        try:
+            # Wait briefly to see if it crashes immediately
+            proc.wait(timeout=2.0)
+            
+            # If we get here, process exited within 2 seconds
+            if proc.returncode != 0:
+                # Read stderr
+                stderr_output = proc.stderr.read() if proc.stderr else ""
+                
+                error_msg = f"MPV exited with code {proc.returncode}"
+                advice = "Please check your MPV installation."
+                
+                if "No such filter: 'drawtext'" in stderr_output:
+                    error_msg = "MPV failed because 'drawtext' filter is missing."
+                    advice = "This usually happens with 'lite' MPV builds.\n\nSOLUTION: Uncheck the 'Show Titles' box in the bottom right to disable text overlays."
+                elif "No option name near" in stderr_output:
+                    error_msg = "MPV failed due to path parsing error."
+                    advice = "This might be due to special characters in the file path."
+                
+                # Emit signal to show dialog on main thread
+                self.mpv_error_signal.emit(error_msg, advice)
+                
+        except subprocess.TimeoutExpired:
+            # Process is still running after 2 seconds, assume success
+            pass
+        except Exception as e:
+            print(f"Error monitoring MPV: {e}")
+
+    def _show_mpv_error(self, error: str, advice: str):
+        """Show MPV error dialog."""
+        QMessageBox.warning(
+            self,
+            "MPV Launch Failed",
+            f"{error}\n\n{advice}"
+        )
+
     def _launch_mpv(self):
         """Launch MPV preview."""
         try:
@@ -451,15 +512,24 @@ class MainWindow(QMainWindow):
             if self.enable_third_cb.isChecked() and self.video_third.get_video_path():
                 video_third = self.video_third.get_video_path()
             
-            self.mpv_launcher.launch(
+            proc = self.mpv_launcher.launch(
                 video_left=self.video_left.get_video_path(),
                 video_right=self.video_right.get_video_path(),
                 video_third=video_third,
                 title_left=self.video_left.get_title(),
                 title_right=self.video_right.get_title(),
                 title_third=self.video_third.get_title() if video_third else None,
+                show_titles=self.show_titles_cb.isChecked(),
                 fullscreen=True
             )
+            
+            # Monitor process in background thread
+            threading.Thread(
+                target=self._monitor_mpv_process, 
+                args=(proc,), 
+                daemon=True
+            ).start()
+            
         except RuntimeError as e:
             QMessageBox.critical(
                 self,

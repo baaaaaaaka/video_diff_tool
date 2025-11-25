@@ -23,7 +23,8 @@ class MPVLauncher:
         title_right: str,
         font_path: str,
         title_third: Optional[str] = None,
-        has_third_video: bool = False
+        has_third_video: bool = False,
+        show_titles: bool = True
     ) -> str:
         """
         Build the lavfi-complex filter string for MPV.
@@ -35,30 +36,38 @@ class MPVLauncher:
         title_left_escaped = self._escape_drawtext(title_left)
         title_right_escaped = self._escape_drawtext(title_right)
         
-        # Build drawtext filter for left video
-        drawtext_left = (
-            f"drawtext=fontfile='{formatted_font}':"
-            f"text='{title_left_escaped}':"
-            f"x=(w-text_w)/2:y=(h-text_h)-100:"
-            f"fontsize=36:fontcolor=white:"
-            f"box=1:boxcolor=black@0.5:boxborderw=5"
-        )
+        # Build filter for left video
+        if show_titles:
+            drawtext_left = (
+                f"drawtext=fontfile='{formatted_font}':"
+                f"text='{title_left_escaped}':"
+                f"x=(w-text_w)/2:y=(h-text_h)-100:"
+                f"fontsize=36:fontcolor=white:"
+                f"box=1:boxcolor=black@0.5:boxborderw=5"
+            )
+            filter_left = f"[vid11] {drawtext_left} [left]"
+        else:
+            filter_left = "[vid11] copy [left]"
         
-        # Build drawtext filter for right video
-        drawtext_right = (
-            f"drawtext=fontfile='{formatted_font}':"
-            f"text='{title_right_escaped}':"
-            f"x=(w-text_w)/2:y=(h-text_h)-100:"
-            f"fontsize=36:fontcolor=white:"
-            f"box=1:boxcolor=black@0.5:boxborderw=5"
-        )
+        # Build filter for right video
+        if show_titles:
+            drawtext_right = (
+                f"drawtext=fontfile='{formatted_font}':"
+                f"text='{title_right_escaped}':"
+                f"x=(w-text_w)/2:y=(h-text_h)-100:"
+                f"fontsize=36:fontcolor=white:"
+                f"box=1:boxcolor=black@0.5:boxborderw=5"
+            )
+            filter_right = f"[vid21] {drawtext_right} [right]"
+        else:
+            filter_right = "[vid21] copy [right]"
         
         if has_third_video:
             # 3 video layout with third video in bottom right
             title_third_escaped = self._escape_drawtext(title_third or "")
             
-            # Build drawtext filter for third video (only if title is not empty)
-            if title_third_escaped:
+            # Build filter for third video
+            if show_titles and title_third_escaped:
                 drawtext_third = (
                     f"drawtext=fontfile='{formatted_font}':"
                     f"text='{title_third_escaped}':"
@@ -76,9 +85,9 @@ class MPVLauncher:
                 # Split video 2 for display and diff
                 "[vid2] split [vid21] [vid22];"
                 # Add title to video 1
-                f"[vid11] {drawtext_left} [left];"
+                f"{filter_left};"
                 # Add title to video 2
-                f"[vid21] {drawtext_right} [right];"
+                f"{filter_right};"
                 # Create difference blend from the splits
                 "[vid12][vid22] blend=all_mode='difference' [blended];"
                 # Process third video
@@ -98,13 +107,13 @@ class MPVLauncher:
                 # Split video 2 for display and diff
                 "[vid2] split [vid21] [vid22];"
                 # Add title to video 1
-                f"[vid11] {drawtext_left} [left];"
+                f"{filter_left};"
                 # Add title to video 2
-                f"[vid21] {drawtext_right} [right];"
+                f"{filter_right};"
                 # Create difference blend from the splits
                 "[vid12][vid22] blend=all_mode='difference' [blended];"
                 # Create black frame same size as blended
-                "[blended] pad=2*iw:ih:0:0 [down];"
+                "[blended] pad=2*iw:ih:0:0:black [down];"
                 # Stack top row (left + right)
                 "[left][right] hstack [up];"
                 # Stack top and bottom
@@ -130,6 +139,7 @@ class MPVLauncher:
         title_left: Optional[str] = None,
         title_right: Optional[str] = None,
         title_third: Optional[str] = None,
+        show_titles: bool = True,
         fullscreen: bool = True
     ) -> subprocess.Popen:
         """
@@ -139,6 +149,7 @@ class MPVLauncher:
         print(f"  Left: {video_left}")
         print(f"  Right: {video_right}")
         print(f"  Third: {video_third}")
+        print(f"  Show Titles: {show_titles}")
         
         # Get paths
         mpv_path = self.finder.find_mpv(self.settings.get("mpv_path"))
@@ -175,7 +186,8 @@ class MPVLauncher:
             title_right=title_right,
             font_path=font_path,
             title_third=title_third,
-            has_third_video=has_third
+            has_third_video=has_third,
+            show_titles=show_titles
         )
         
         # Build command
@@ -199,13 +211,21 @@ class MPVLauncher:
         
         # Launch MPV
         print(f"Launching MPV command: {cmd}")
+        
+        kwargs = {
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.PIPE,
+            "text": True,
+            "bufsize": 1  # Line buffered
+        }
+        
         if platform.system() == "Windows":
             # On Windows, use CREATE_NO_WINDOW to avoid console popup
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            return subprocess.Popen(cmd, startupinfo=startupinfo)
-        else:
-            return subprocess.Popen(cmd)
+            kwargs["startupinfo"] = startupinfo
+            
+        return subprocess.Popen(cmd, **kwargs)
     
     def get_mpv_status(self) -> tuple[bool, str]:
         """Check if MPV is available and return status."""
