@@ -12,11 +12,24 @@ from pathlib import Path
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPalette, QColor, QFont
+# Check dependencies BEFORE importing PyQt6
+try:
+    from src.dependency_manager import check_and_install_dependencies
+    check_and_install_dependencies()
+except Exception as e:
+    print(f"Warning: Failed to check dependencies: {e}")
 
-from src.main_window import MainWindow
+try:
+    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QPalette, QColor, QFont
+    from src.main_window import MainWindow
+except ImportError as e:
+    print("CRITICAL ERROR: Failed to import PyQt6 or application modules.")
+    print(f"Details: {e}")
+    print("Please ensure all dependencies are installed by running:")
+    print("pip install -r requirements.txt")
+    sys.exit(1)
 
 
 def setup_light_theme(app: QApplication) -> None:
@@ -87,4 +100,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
