@@ -33,6 +33,42 @@ class MainWindow(QMainWindow):
         self._setup_menu()
         self._load_settings()
         self._update_status()
+        self._check_binaries_and_prompt()
+    
+    def _check_binaries_and_prompt(self):
+        """Check for required binaries and prompt user if missing."""
+        mpv_path = self.finder.find_mpv(self.settings.get("mpv_path"))
+        ffmpeg_path = self.finder.find_ffmpeg(self.settings.get("ffmpeg_path"))
+        
+        missing = []
+        if not mpv_path:
+            missing.append("mpv")
+        if not ffmpeg_path:
+            missing.append("ffmpeg")
+            
+        if missing:
+            msg = "The following required tools were not found:\n\n"
+            for binary in missing:
+                msg += f"• {binary.upper()}\n"
+            
+            msg += "\nMost features will not work without them.\n\n"
+            msg += "Would you like to see installation instructions?"
+            
+            reply = QMessageBox.warning(
+                self,
+                "Missing Dependencies",
+                msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                instructions = ""
+                for binary in missing:
+                    instructions += f"--- {binary.upper()} ---\n"
+                    instructions += self.finder.get_install_instructions(binary)
+                    instructions += "\n\n"
+                
+                QMessageBox.information(self, "Installation Instructions", instructions)
     
     def _setup_ui(self):
         """Setup the main UI."""
