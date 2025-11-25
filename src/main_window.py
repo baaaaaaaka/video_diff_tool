@@ -308,7 +308,7 @@ class MainWindow(QMainWindow):
         """)
         
         # Set minimum size
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(1000, 800)
     
     def _setup_menu(self):
         """Setup menu bar."""
