@@ -186,13 +186,17 @@ class BinaryFinder:
         """Check if an encoder is actually usable on the system."""
         try:
             # Run a minimal encoding test: 1 frame of black color
-            # Use -f null - to discard output
+            # Use 128x128 to satisfy alignment requirements of some HW encoders
+            # Explicitly set pixel format to yuv420p (universally supported fallback)
             cmd = [
                 ffmpeg_path,
+                "-y",
                 "-v", "error",
                 "-f", "lavfi",
-                "-i", "color=black:s=64x64:r=1",
+                "-i", "color=black:s=128x128:r=1",
                 "-c:v", encoder,
+                "-pix_fmt", "yuv420p",
+                "-profile:v", "main",
                 "-frames:v", "1",
                 "-f", "null",
                 "-"
