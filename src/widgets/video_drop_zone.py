@@ -37,6 +37,8 @@ class VideoDropZone(QWidget):
     
     # Signal emitted when video path changes
     video_changed = pyqtSignal(str)
+    # Signal emitted when title changes
+    title_changed = pyqtSignal(str)
     
     # Supported video extensions
     VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.wmv', '.flv', '.m4v'}
@@ -120,14 +122,14 @@ class VideoDropZone(QWidget):
         self.browse_btn = QPushButton("Browse")
         self.browse_btn.clicked.connect(self._browse_file)
         self.browse_btn.setCursor(Qt.CursorShape.ArrowCursor)
-        self.browse_btn.setFixedWidth(70) # Slightly smaller
+        # self.browse_btn.setFixedWidth(70) # Removed fixed width
         self.browse_btn.setStyleSheet("""
             QPushButton {
                 background-color: #4a90d9;
                 color: white;
                 border: none;
                 border-radius: 4px;
-                padding: 6px 0px;
+                padding: 6px 15px;
                 font-size: 12px;
                 font-weight: 500;
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -149,14 +151,14 @@ class VideoDropZone(QWidget):
         self.clear_btn.clicked.connect(self.clear)
         self.clear_btn.setCursor(Qt.CursorShape.ArrowCursor)
         self.clear_btn.setEnabled(False)
-        self.clear_btn.setFixedWidth(50) # Slightly smaller
+        # self.clear_btn.setFixedWidth(50) # Removed fixed width
         self.clear_btn.setStyleSheet("""
             QPushButton {
                 background-color: #6c757d;
                 color: white;
                 border: none;
                 border-radius: 4px;
-                padding: 6px 0px;
+                padding: 6px 15px;
                 font-size: 12px;
                 font-weight: 500;
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -190,6 +192,7 @@ class VideoDropZone(QWidget):
             self.title_input = QLineEdit()
             self.title_input.setPlaceholderText(self.default_title or "Enter title...")
             self.title_input.setText(self.default_title)
+            self.title_input.textChanged.connect(self.title_changed)
             self.title_input.setStyleSheet("""
                 QLineEdit {
                     background-color: #fff;

@@ -125,20 +125,22 @@ class MainWindow(QMainWindow):
         self.video_left = VideoDropZone(
             label="Left Video (Candidate)",
             default_title=self.settings.get("title_left"),
-            show_title_input=False,
+            show_title_input=True,
             optional=False
         )
         self.video_left.video_changed.connect(self._on_video_changed)
+        self.video_left.title_changed.connect(self._on_title_changed)
         main_videos_layout.addWidget(self.video_left)
         
         # Right video (Baseline)
         self.video_right = VideoDropZone(
             label="Right Video (Baseline)",
             default_title=self.settings.get("title_right"),
-            show_title_input=False,
+            show_title_input=True,
             optional=False
         )
         self.video_right.video_changed.connect(self._on_video_changed)
+        self.video_right.title_changed.connect(self._on_title_changed)
         main_videos_layout.addWidget(self.video_right)
         
         videos_layout.addLayout(main_videos_layout)
@@ -186,10 +188,11 @@ class MainWindow(QMainWindow):
         self.video_third = VideoDropZone(
             label="Third Video (Bottom Right)",
             default_title=self.settings.get("title_third"),
-            show_title_input=False,
+            show_title_input=True,
             optional=True
         )
         self.video_third.video_changed.connect(self._on_video_changed)
+        self.video_third.title_changed.connect(self._on_title_changed)
         self.video_third.set_enabled_state(self.enable_third_cb.isChecked())
         self.video_third.setMaximumWidth(450)
         third_video_container.addWidget(self.video_third)
@@ -388,6 +391,10 @@ class MainWindow(QMainWindow):
     def _on_video_changed(self, path: str):
         """Handle video path change."""
         self._update_buttons()
+        self._update_layout_preview()
+    
+    def _on_title_changed(self, title: str):
+        """Handle title change."""
         self._update_layout_preview()
     
     def _on_third_video_toggle(self, state: int):
