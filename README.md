@@ -2,10 +2,15 @@
 
 A cross-platform GUI tool for comparing videos side-by-side with difference visualization. Supports real-time preview with MPV and encoding with FFmpeg.
 
+![Main Interface](screenshot/main.png)
+
 ## Features
 
 - **Video Comparison**: Compare two videos side-by-side with automatic difference visualization
 - **Real-time Preview**: Preview comparisons using MPV player
+  
+  ![MPV Comparison](screenshot/mpv_compare.png)
+
 - **FFmpeg Encoding**: Encode comparison videos with hardware-accelerated HEVC
 - **Optional Third Video**: Add a third video to the bottom-right quadrant
 - **Drag & Drop**: Easy video file selection with drag and drop support

@@ -57,3 +57,10 @@ exe = EXE(
     icon='assets/logo.ico',
 )
 
+app = BUNDLE(
+    exe,
+    name='VideoDiffTool.app',
+    icon='assets/logo.ico',
+    bundle_identifier=None,
+)
+
