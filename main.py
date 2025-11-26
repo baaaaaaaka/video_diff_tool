@@ -13,11 +13,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Check dependencies BEFORE importing PyQt6
-try:
-    from src.dependency_manager import check_and_install_dependencies
-    check_and_install_dependencies()
-except Exception as e:
-    print(f"Warning: Failed to check dependencies: {e}")
+# Skip dependency check if running as a frozen application (binary)
+if not getattr(sys, 'frozen', False):
+    try:
+        from src.dependency_manager import check_and_install_dependencies
+        check_and_install_dependencies()
+    except Exception as e:
+        print(f"Warning: Failed to check dependencies: {e}")
 
 try:
     from PyQt6.QtWidgets import QApplication

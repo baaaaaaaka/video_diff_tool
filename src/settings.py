@@ -20,6 +20,9 @@ class Settings:
         
         # Third video
         "enable_third_video": False,
+
+        # MPV Settings
+        "fullscreen_mode": True,
         
         # Binary paths (empty = auto-detect)
         "mpv_path": "",

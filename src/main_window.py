@@ -184,6 +184,19 @@ class MainWindow(QMainWindow):
         """)
         third_video_container.addWidget(self.show_titles_cb)
         
+        # Checkbox for MPV fullscreen mode
+        self.fullscreen_cb = QCheckBox("Fullscreen Mode")
+        self.fullscreen_cb.setChecked(self.settings.get("fullscreen_mode", True))
+        self.fullscreen_cb.setToolTip("If unchecked, opens MPV in a maximized window instead of fullscreen")
+        self.fullscreen_cb.setStyleSheet("""
+            QCheckBox {
+                font-size: 13px;
+                color: #555;
+                padding: 5px;
+            }
+        """)
+        # Removed from third_video_container to place under preview button
+
         # Third video drop zone
         self.video_third = VideoDropZone(
             label="Third Video (Bottom Right)",
@@ -205,6 +218,10 @@ class MainWindow(QMainWindow):
         # Action buttons
         buttons_layout = QHBoxLayout()
         buttons_layout.setSpacing(15)
+        
+        # Preview section (Button + Checkbox)
+        preview_container = QVBoxLayout()
+        preview_container.setSpacing(5)
         
         # Preview with MPV button
         self.preview_btn = QPushButton("Preview with MPV")
@@ -231,7 +248,16 @@ class MainWindow(QMainWindow):
                 background-color: #ccc;
             }
         """)
-        buttons_layout.addWidget(self.preview_btn)
+        preview_container.addWidget(self.preview_btn)
+        
+        # Add fullscreen checkbox here
+        preview_container.addWidget(self.fullscreen_cb, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        buttons_layout.addLayout(preview_container)
+        
+        # Encode section (Button + Spacer to align with Preview)
+        encode_container = QVBoxLayout()
+        encode_container.setSpacing(5)
         
         # Encode with FFmpeg button
         self.encode_btn = QPushButton("Encode with FFmpeg")
@@ -258,7 +284,14 @@ class MainWindow(QMainWindow):
                 background-color: #ccc;
             }
         """)
-        buttons_layout.addWidget(self.encode_btn)
+        encode_container.addWidget(self.encode_btn)
+        
+        # Spacer to match the checkbox height in the other column so buttons stay aligned top
+        spacer_label = QLabel("")
+        spacer_label.setFixedHeight(self.fullscreen_cb.sizeHint().height())
+        encode_container.addWidget(spacer_label)
+        
+        buttons_layout.addLayout(encode_container)
         
         main_layout.addLayout(buttons_layout)
         
@@ -311,7 +344,8 @@ class MainWindow(QMainWindow):
         """)
         
         # Set minimum size
-        self.setMinimumSize(1000, 800)
+        self.setMinimumSize(1100, 850)
+        self.resize(1100, 850)
     
     def _setup_menu(self):
         """Setup menu bar."""
@@ -364,6 +398,7 @@ class MainWindow(QMainWindow):
         self.video_right.set_title(self.settings.get("title_right"))
         self.video_third.set_title(self.settings.get("title_third"))
         self.show_titles_cb.setChecked(self.settings.get("show_titles"))
+        self.fullscreen_cb.setChecked(self.settings.get("fullscreen_mode", True))
     
     def _save_settings(self):
         """Save current state to settings."""
@@ -384,6 +419,7 @@ class MainWindow(QMainWindow):
         self.settings.set("title_right", self.video_right.get_title())
         self.settings.set("title_third", self.video_third.get_title())
         self.settings.set("show_titles", self.show_titles_cb.isChecked())
+        self.settings.set("fullscreen_mode", self.fullscreen_cb.isChecked())
         
         # Third video enabled
         self.settings.set("enable_third_video", self.enable_third_cb.isChecked())
@@ -527,7 +563,7 @@ class MainWindow(QMainWindow):
                 title_right=self.video_right.get_title(),
                 title_third=self.video_third.get_title() if video_third else None,
                 show_titles=self.show_titles_cb.isChecked(),
-                fullscreen=True
+                fullscreen=self.fullscreen_cb.isChecked()
             )
             
             # Monitor process in background thread
@@ -587,7 +623,7 @@ class MainWindow(QMainWindow):
             "<li>Support for hardware-accelerated encoding</li>"
             "<li>Customizable titles and settings</li>"
             "</ul>"
-            "<p>Version 1.0.0</p>"
+            "<p>Version 1.0.1</p>"
         )
     
     def closeEvent(self, event):

@@ -2,6 +2,7 @@
 
 import subprocess
 import platform
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -205,9 +206,20 @@ class MPVLauncher:
         # Add fullscreen if requested
         if fullscreen:
             cmd.append("--fs")
+        else:
+            # Use autofit-larger to ensure window fits on screen
+            cmd.append("--autofit-larger=100%x100%")
+            # Ensure window is resizable
+            cmd.append("--no-keepaspect-window")
         
         # Force window
         cmd.append("--force-window=immediate")
+
+        # Screenshot directory (defaults to Desktop to avoid permission issues)
+        desktop_path = Path(os.path.expanduser("~/Desktop"))
+        if desktop_path.exists():
+            cmd.append(f"--screenshot-directory={desktop_path}")
+            cmd.append("--screenshot-template=video-diff-%F-%p")
         
         # Launch MPV
         print(f"Launching MPV command: {cmd}")
