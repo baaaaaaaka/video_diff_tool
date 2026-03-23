@@ -58,17 +58,7 @@ jobs:
             prerelease="true"
           fi
 
-          app_version=$(python - <<'PY'
-from pathlib import Path
-import re
-
-content = Path("src/app_metadata.py").read_text(encoding="utf-8")
-match = re.search(r'^APP_VERSION = "([^"]+)"$', content, re.MULTILINE)
-if not match:
-    raise SystemExit("APP_VERSION not found in src/app_metadata.py")
-print(match.group(1))
-PY
-)
+          app_version=$(python -c 'from pathlib import Path; import re; content = Path("src/app_metadata.py").read_text(encoding="utf-8"); match = re.search(r"^APP_VERSION = \"([^\"]+)\"$", content, re.MULTILINE); print(match.group(1) if match else (_ for _ in ()).throw(SystemExit("APP_VERSION not found in src/app_metadata.py")))')
 
           if [[ "${app_version}" != "${version}" ]]; then
             echo "Version string in src/app_metadata.py does not match tag ${tag}" >&2
