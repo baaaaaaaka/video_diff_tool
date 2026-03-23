@@ -8,6 +8,7 @@ import subprocess
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QGroupBox, QCheckBox, QMessageBox, QStatusBar,
+    QComboBox,
     QApplication
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
@@ -16,6 +17,13 @@ from PyQt6.QtGui import QAction, QIcon
 from .settings import get_settings
 from .binary_finder import get_binary_finder
 from .mpv_launcher import get_mpv_launcher
+from .video_validator import get_video_validator
+from .comparison_mode import (
+    get_comparison_mode_options,
+    get_debug_view_name,
+    get_debug_view_options,
+    is_debug_view_mode,
+)
 from .widgets.video_drop_zone import VideoDropZone
 from .widgets.encoding_dialog import EncodingDialog
 from .widgets.settings_dialog import SettingsDialog
@@ -32,6 +40,7 @@ class MainWindow(QMainWindow):
         self.settings = get_settings()
         self.finder = get_binary_finder()
         self.mpv_launcher = get_mpv_launcher()
+        self.validator = get_video_validator()
         
         # Connect error signal
         self.mpv_error_signal.connect(self._show_mpv_error)
@@ -144,6 +153,32 @@ class MainWindow(QMainWindow):
         main_videos_layout.addWidget(self.video_right)
         
         videos_layout.addLayout(main_videos_layout)
+
+        mode_controls_layout = QHBoxLayout()
+        mode_controls_layout.setSpacing(10)
+
+        self.comparison_mode_label = QLabel("Comparison Mode:")
+        mode_controls_layout.addWidget(self.comparison_mode_label)
+
+        self.comparison_mode_combo = QComboBox()
+        for option in get_comparison_mode_options():
+            self.comparison_mode_combo.addItem(option["name"], option["id"])
+        self.comparison_mode_combo.currentIndexChanged.connect(self._on_comparison_mode_changed)
+        self.comparison_mode_combo.setToolTip("Debug View mode crops one 1080p debug quadrant before preview or encoding.")
+        mode_controls_layout.addWidget(self.comparison_mode_combo)
+
+        self.debug_view_label = QLabel("Debug View:")
+        mode_controls_layout.addWidget(self.debug_view_label)
+
+        self.debug_view_combo = QComboBox()
+        for option in get_debug_view_options():
+            self.debug_view_combo.addItem(option["name"], option["id"])
+        self.debug_view_combo.currentIndexChanged.connect(self._on_debug_view_changed)
+        self.debug_view_combo.setToolTip("Choose which 2160p debug quadrant to compare.")
+        mode_controls_layout.addWidget(self.debug_view_combo)
+        mode_controls_layout.addStretch()
+
+        videos_layout.addLayout(mode_controls_layout)
         
         # Third video section
         third_section_layout = QHBoxLayout()
@@ -399,6 +434,9 @@ class MainWindow(QMainWindow):
         self.video_third.set_title(self.settings.get("title_third"))
         self.show_titles_cb.setChecked(self.settings.get("show_titles"))
         self.fullscreen_cb.setChecked(self.settings.get("fullscreen_mode", True))
+        self._set_combo_data(self.comparison_mode_combo, self.settings.get("comparison_mode"))
+        self._set_combo_data(self.debug_view_combo, self.settings.get("debug_view"))
+        self._update_mode_controls()
     
     def _save_settings(self):
         """Save current state to settings."""
@@ -420,23 +458,55 @@ class MainWindow(QMainWindow):
         self.settings.set("title_third", self.video_third.get_title())
         self.settings.set("show_titles", self.show_titles_cb.isChecked())
         self.settings.set("fullscreen_mode", self.fullscreen_cb.isChecked())
+        self.settings.set("comparison_mode", self.comparison_mode_combo.currentData())
+        self.settings.set("debug_view", self.debug_view_combo.currentData())
         
         # Third video enabled
         self.settings.set("enable_third_video", self.enable_third_cb.isChecked())
+
+    def _set_combo_data(self, combo: QComboBox, value: str) -> None:
+        """Select a combo entry by its item data."""
+        for index in range(combo.count()):
+            if combo.itemData(index) == value:
+                combo.setCurrentIndex(index)
+                return
+
+    def _is_debug_view_mode(self) -> bool:
+        """Check whether the active comparison mode crops debug panels."""
+        return is_debug_view_mode(self.comparison_mode_combo.currentData())
+
+    def _update_mode_controls(self):
+        """Update control visibility and debug-mode-only restrictions."""
+        debug_mode = self._is_debug_view_mode()
+        self.debug_view_label.setVisible(debug_mode)
+        self.debug_view_combo.setVisible(debug_mode)
+        self.enable_third_cb.setEnabled(not debug_mode)
+        self.video_third.set_enabled_state(
+            (not debug_mode) and self.enable_third_cb.isChecked()
+        )
     
     def _on_video_changed(self, path: str):
         """Handle video path change."""
         self._update_buttons()
         self._update_layout_preview()
-    
+
     def _on_title_changed(self, title: str):
         """Handle title change."""
+        self._update_layout_preview()
+
+    def _on_comparison_mode_changed(self, index: int):
+        """Handle comparison mode change."""
+        self._update_mode_controls()
+        self._update_buttons()
+        self._update_layout_preview()
+
+    def _on_debug_view_changed(self, index: int):
+        """Handle debug panel change."""
         self._update_layout_preview()
     
     def _on_third_video_toggle(self, state: int):
         """Handle third video checkbox toggle."""
-        enabled = state == Qt.CheckState.Checked.value
-        self.video_third.set_enabled_state(enabled)
+        self._update_mode_controls()
         self._update_buttons()
         self._update_layout_preview()
     
@@ -458,10 +528,16 @@ class MainWindow(QMainWindow):
     
     def _update_layout_preview(self):
         """Update the layout preview diagram."""
-        has_third = self.enable_third_cb.isChecked() and self.video_third.get_video_path()
-        
+        debug_mode = self._is_debug_view_mode()
+        has_third = (
+            not debug_mode
+            and self.enable_third_cb.isChecked()
+            and self.video_third.get_video_path()
+        )
+
         left_title = self.video_left.get_title() or "Left"
         right_title = self.video_right.get_title() or "Right"
+        panel_name = get_debug_view_name(self.debug_view_combo.currentData())
         third_title = self.video_third.get_title() or "Third" if has_third else "Black"
         
         # Create ASCII diagram
@@ -473,15 +549,26 @@ class MainWindow(QMainWindow):
         
         border = "+" + "-" * half_width + "+" + "-" * half_width + "+"
         
-        diagram = [
-            border,
-            "|" + center(left_title[:half_width-2], half_width) + "|" + center(right_title[:half_width-2], half_width) + "|",
-            "|" + center("(Video 1)", half_width) + "|" + center("(Video 2)", half_width) + "|",
-            border,
-            "|" + center("Difference", half_width) + "|" + center(third_title[:half_width-2], half_width) + "|",
-            "|" + center("(Blend)", half_width) + "|" + center("(Video 3)" if has_third else "(Empty)", half_width) + "|",
-            border,
-        ]
+        if debug_mode:
+            diagram = [
+                border,
+                "|" + center(left_title[:half_width-2], half_width) + "|" + center(right_title[:half_width-2], half_width) + "|",
+                "|" + center(f"({panel_name})", half_width) + "|" + center(f"({panel_name})", half_width) + "|",
+                border,
+                "|" + center(f"Diff {panel_name}"[:half_width-2], half_width) + "|" + center("Black", half_width) + "|",
+                "|" + center("(Debug View)", half_width) + "|" + center("(Empty)", half_width) + "|",
+                border,
+            ]
+        else:
+            diagram = [
+                border,
+                "|" + center(left_title[:half_width-2], half_width) + "|" + center(right_title[:half_width-2], half_width) + "|",
+                "|" + center("(Video 1)", half_width) + "|" + center("(Video 2)", half_width) + "|",
+                border,
+                "|" + center("Difference", half_width) + "|" + center(third_title[:half_width-2], half_width) + "|",
+                "|" + center("(Blend)", half_width) + "|" + center("(Video 3)" if has_third else "(Empty)", half_width) + "|",
+                border,
+            ]
         
         self.layout_preview.setText("\n".join(diagram))
     
@@ -551,9 +638,21 @@ class MainWindow(QMainWindow):
     def _launch_mpv(self):
         """Launch MPV preview."""
         try:
+            comparison_mode = self.comparison_mode_combo.currentData()
+            debug_view = self.debug_view_combo.currentData()
+            debug_mode = self._is_debug_view_mode()
             video_third = None
-            if self.enable_third_cb.isChecked() and self.video_third.get_video_path():
+            if not debug_mode and self.enable_third_cb.isChecked() and self.video_third.get_video_path():
                 video_third = self.video_third.get_video_path()
+
+            if debug_mode:
+                valid, error, _ = self.validator.validate_videos_for_debug_view(
+                    self.video_left.get_video_path(),
+                    self.video_right.get_video_path(),
+                )
+                if not valid:
+                    QMessageBox.critical(self, "Validation Error", error)
+                    return
             
             proc = self.mpv_launcher.launch(
                 video_left=self.video_left.get_video_path(),
@@ -563,7 +662,9 @@ class MainWindow(QMainWindow):
                 title_right=self.video_right.get_title(),
                 title_third=self.video_third.get_title() if video_third else None,
                 show_titles=self.show_titles_cb.isChecked(),
-                fullscreen=self.fullscreen_cb.isChecked()
+                fullscreen=self.fullscreen_cb.isChecked(),
+                comparison_mode=comparison_mode,
+                debug_view=debug_view,
             )
             
             # Monitor process in background thread
@@ -582,8 +683,9 @@ class MainWindow(QMainWindow):
     
     def _show_encode_dialog(self):
         """Show encoding dialog."""
+        debug_mode = self._is_debug_view_mode()
         video_third = None
-        if self.enable_third_cb.isChecked() and self.video_third.get_video_path():
+        if not debug_mode and self.enable_third_cb.isChecked() and self.video_third.get_video_path():
             video_third = self.video_third.get_video_path()
         
         dialog = EncodingDialog(
@@ -593,6 +695,8 @@ class MainWindow(QMainWindow):
             title_right=self.video_right.get_title(),
             video_third=video_third,
             title_third=self.video_third.get_title() if video_third else "",
+            comparison_mode=self.comparison_mode_combo.currentData(),
+            debug_view=self.debug_view_combo.currentData(),
             parent=self
         )
         dialog.exec()
@@ -621,9 +725,10 @@ class MainWindow(QMainWindow):
             "<li>Preview comparisons with MPV</li>"
             "<li>Encode comparisons with FFmpeg 4:4:4 output</li>"
             "<li>Support for NVENC hardware-accelerated encoding</li>"
+            "<li>Crop 4K debug videos to Display, Flow, Mask, or Warped panels</li>"
             "<li>Customizable titles and settings</li>"
             "</ul>"
-            "<p>Version 1.3.0</p>"
+            "<p>Version 1.4.0-rc1</p>"
         )
     
     def closeEvent(self, event):

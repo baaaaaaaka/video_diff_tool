@@ -8,6 +8,12 @@ from typing import Optional
 
 from .settings import get_settings
 from .binary_finder import get_binary_finder
+from .comparison_mode import (
+    get_debug_crop_filter,
+    is_debug_view_mode,
+    normalize_comparison_mode,
+    normalize_debug_view,
+)
 
 
 class MPVLauncher:
@@ -25,7 +31,9 @@ class MPVLauncher:
         font_path: str,
         title_third: Optional[str] = None,
         has_third_video: bool = False,
-        show_titles: bool = True
+        show_titles: bool = True,
+        comparison_mode: str = "standard",
+        debug_view: str = "display",
     ) -> str:
         """
         Build the lavfi-complex filter string for MPV.
@@ -36,6 +44,18 @@ class MPVLauncher:
         # Escape special characters in titles for drawtext filter
         title_left_escaped = self._escape_drawtext(title_left)
         title_right_escaped = self._escape_drawtext(title_right)
+        comparison_mode = normalize_comparison_mode(comparison_mode)
+        debug_view = normalize_debug_view(debug_view)
+        debug_crop = get_debug_crop_filter(debug_view) if is_debug_view_mode(comparison_mode) else ""
+
+        def make_split_chain(input_label: str, source_label: str, display_label: str, diff_label: str) -> str:
+            """Build input preprocessing and split chain."""
+            if debug_crop:
+                return (
+                    f"{input_label}{debug_crop}[{source_label}];"
+                    f"[{source_label}]split[{display_label}][{diff_label}]"
+                )
+            return f"{input_label}split[{display_label}][{diff_label}]"
         
         # Build filter for left video
         if show_titles:
@@ -81,10 +101,10 @@ class MPVLauncher:
                 third_filter = "[vid3] copy [third]"
             
             filter_complex = (
-                # Split video 1 for display and diff
-                "[vid1] split [vid11] [vid12];"
-                # Split video 2 for display and diff
-                "[vid2] split [vid21] [vid22];"
+                # Preprocess video 1 and split for display/diff.
+                f"{make_split_chain('[vid1]', 'vid1_src', 'vid11', 'vid12')};"
+                # Preprocess video 2 and split for display/diff.
+                f"{make_split_chain('[vid2]', 'vid2_src', 'vid21', 'vid22')};"
                 # Add title to video 1
                 f"{filter_left};"
                 # Add title to video 2
@@ -103,10 +123,10 @@ class MPVLauncher:
         else:
             # 2 video layout with black in bottom right
             filter_complex = (
-                # Split video 1 for display and diff
-                "[vid1] split [vid11] [vid12];"
-                # Split video 2 for display and diff
-                "[vid2] split [vid21] [vid22];"
+                # Preprocess video 1 and split for display/diff.
+                f"{make_split_chain('[vid1]', 'vid1_src', 'vid11', 'vid12')};"
+                # Preprocess video 2 and split for display/diff.
+                f"{make_split_chain('[vid2]', 'vid2_src', 'vid21', 'vid22')};"
                 # Add title to video 1
                 f"{filter_left};"
                 # Add title to video 2
@@ -141,7 +161,9 @@ class MPVLauncher:
         title_right: Optional[str] = None,
         title_third: Optional[str] = None,
         show_titles: bool = True,
-        fullscreen: bool = True
+        fullscreen: bool = True,
+        comparison_mode: str = "standard",
+        debug_view: str = "display",
     ) -> subprocess.Popen:
         """
         Launch MPV with video comparison.
@@ -151,6 +173,8 @@ class MPVLauncher:
         print(f"  Right: {video_right}")
         print(f"  Third: {video_third}")
         print(f"  Show Titles: {show_titles}")
+        print(f"  Comparison Mode: {comparison_mode}")
+        print(f"  Debug View: {debug_view}")
         
         # Get paths
         mpv_path = self.finder.find_mpv(self.settings.get("mpv_path"))
@@ -188,7 +212,9 @@ class MPVLauncher:
             font_path=font_path,
             title_third=title_third,
             has_third_video=has_third,
-            show_titles=show_titles
+            show_titles=show_titles,
+            comparison_mode=comparison_mode,
+            debug_view=debug_view,
         )
         
         # Build command

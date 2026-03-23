@@ -20,6 +20,8 @@ class Settings:
         
         # Third video
         "enable_third_video": False,
+        "comparison_mode": "standard",
+        "debug_view": "display",
 
         # MPV Settings
         "fullscreen_mode": True,

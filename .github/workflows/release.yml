@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing git tag to build and release, for example v1.3.0"
+        description: "Existing git tag to build and release, for example v1.3.0 or v1.4.0-rc1"
         required: true
         type: string
 
@@ -26,6 +26,7 @@ jobs:
     outputs:
       release_tag: ${{ steps.meta.outputs.release_tag }}
       version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -45,13 +46,17 @@ jobs:
             tag="${GITHUB_REF_NAME}"
           fi
 
-          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Expected a semantic version tag like v1.3.0, got: ${tag}" >&2
+          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Expected a semantic version tag like v1.3.0 or v1.4.0-rc1, got: ${tag}" >&2
             exit 1
           fi
 
           git rev-parse "${tag}^{commit}" >/dev/null
           version="${tag#v}"
+          prerelease="false"
+          if [[ "${tag}" == *-* ]]; then
+            prerelease="true"
+          fi
 
           if ! grep -Fq "Version ${version}</p>" src/main_window.py; then
             echo "Version string in src/main_window.py does not match tag ${tag}" >&2
@@ -60,6 +65,7 @@ jobs:
 
           echo "release_tag=${tag}" >> "${GITHUB_OUTPUT}"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
 
   build-macos:
     name: Build macOS arm64
@@ -168,6 +174,7 @@ jobs:
           set -euo pipefail
           tag="${{ needs.prepare.outputs.release_tag }}"
           repo="${GITHUB_REPOSITORY}"
+          prerelease="${{ needs.prepare.outputs.prerelease }}"
           mapfile -d '' assets < <(find release-assets -type f -name '*.zip' -print0 | sort -z)
 
           if [[ "${#assets[@]}" -eq 0 ]]; then
@@ -176,7 +183,14 @@ jobs:
           fi
 
           if gh release view "${tag}" --repo "${repo}" >/dev/null 2>&1; then
+            if [[ "${prerelease}" == "true" ]]; then
+              gh release edit "${tag}" --repo "${repo}" --prerelease
+            fi
             gh release upload "${tag}" "${assets[@]}" --repo "${repo}" --clobber
           else
-            gh release create "${tag}" "${assets[@]}" --repo "${repo}" --title "${tag}" --generate-notes
+            if [[ "${prerelease}" == "true" ]]; then
+              gh release create "${tag}" "${assets[@]}" --repo "${repo}" --title "${tag}" --generate-notes --prerelease
+            else
+              gh release create "${tag}" "${assets[@]}" --repo "${repo}" --title "${tag}" --generate-notes
+            fi
           fi

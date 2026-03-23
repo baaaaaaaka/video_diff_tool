@@ -28,6 +28,8 @@ class VideoInfo:
 
 class VideoValidator:
     """Validates video files and checks compatibility."""
+
+    DEBUG_VIEW_RESOLUTION = (3840, 2160)
     
     def __init__(self, ffprobe_path: Optional[str] = None):
         """Initialize validator."""
@@ -151,6 +153,42 @@ class VideoValidator:
                 ), None
         
         return True, "", infos
+
+    def validate_videos_for_debug_view(
+        self,
+        video1_path: str,
+        video2_path: str,
+    ) -> Tuple[bool, str, Optional[Dict[str, VideoInfo]]]:
+        """Validate videos for cropped debug-view comparison."""
+
+        valid, error, infos = self.validate_videos_for_comparison(
+            video1_path,
+            video2_path,
+            None,
+        )
+        if not valid or infos is None:
+            return valid, error, infos
+
+        left_info = infos["left"]
+        right_info = infos["right"]
+
+        if left_info.width != right_info.width or left_info.height != right_info.height:
+            return False, (
+                "Debug View mode requires matching input resolutions.\n"
+                f"Left video: {left_info.width}x{left_info.height}\n"
+                f"Right video: {right_info.width}x{right_info.height}"
+            ), None
+
+        required_width, required_height = self.DEBUG_VIEW_RESOLUTION
+        if (left_info.width, left_info.height) != self.DEBUG_VIEW_RESOLUTION:
+            return False, (
+                "Debug View mode expects 3840x2160 debug videos.\n"
+                f"Left video: {left_info.width}x{left_info.height}\n"
+                f"Right video: {right_info.width}x{right_info.height}\n"
+                f"Expected: {required_width}x{required_height}"
+            ), None
+
+        return True, "", infos
     
     def get_frame_count(self, video_path: str) -> int:
         """Get frame count for a single video."""
@@ -168,4 +206,3 @@ def get_video_validator() -> VideoValidator:
     if _validator_instance is None:
         _validator_instance = VideoValidator()
     return _validator_instance
-

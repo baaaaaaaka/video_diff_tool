@@ -13,6 +13,7 @@ A cross-platform GUI tool for comparing videos side-by-side with difference visu
 
 - **FFmpeg Encoding**: Encode comparison videos with H.264 4:4:4 output, or HEVC 4:4:4 via NVENC when available
 - **Optional Third Video**: Add a third video to the bottom-right quadrant
+- **Debug View Mode**: Crop 4K debug videos down to `Display Image`, `Flow`, `Mask`, or `Warped` panels before preview and encoding
 - **Drag & Drop**: Easy video file selection with drag and drop support
 - **Customizable Titles**: Add custom overlay titles to each video
 - **Cross-platform**: Works on macOS and Windows
@@ -84,6 +85,7 @@ python main.py
 ## Releasing
 
 Push a semantic version tag such as `v1.3.0` to trigger the GitHub release workflow.
+Pre-release tags such as `v1.4.0-rc1` are also supported and will be published as GitHub pre-releases.
 
 - **macOS**: Builds on `macos-14` and publishes a `macos-arm64` zip
 - **Windows**: Builds on `windows-latest` and publishes a `windows-x64` zip
@@ -97,6 +99,14 @@ You can also rerun the release flow manually with **Actions → Release → Run 
 2. **Set Titles**: Enter custom titles for each video (optional)
 3. **Preview**: Click "Preview with MPV" to see the comparison in real-time
 4. **Encode**: Click "Encode with FFmpeg" to create an encoded comparison video
+
+### Debug View Mode
+
+1. Set **Comparison Mode** to **Debug View**
+2. Choose one debug panel: **Display Image**, **Flow**, **Mask**, or **Warped**
+3. Preview or encode to compare that cropped panel side-by-side with a difference view
+
+Debug View mode expects both inputs to be `3840x2160` debug renders with the standard 2x2 panel layout.
 
 ### Enable Third Video
 

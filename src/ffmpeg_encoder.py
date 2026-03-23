@@ -13,6 +13,12 @@ from enum import Enum
 from .settings import get_settings
 from .binary_finder import get_binary_finder
 from .video_validator import get_video_validator, VideoInfo
+from .comparison_mode import (
+    get_debug_crop_filter,
+    is_debug_view_mode,
+    normalize_comparison_mode,
+    normalize_debug_view,
+)
 
 
 class EncoderType(Enum):
@@ -98,7 +104,9 @@ class FFmpegEncoder:
         title_right: str,
         font_path: str,
         title_third: Optional[str] = None,
-        has_third_video: bool = False
+        has_third_video: bool = False,
+        comparison_mode: str = "standard",
+        debug_view: str = "display",
     ) -> str:
         """
         Build FFmpeg filter complex for encoding.
@@ -115,6 +123,9 @@ class FFmpegEncoder:
         # Escape special characters
         title_left_escaped = self._escape_ffmpeg_text(title_left)
         title_right_escaped = self._escape_ffmpeg_text(title_right)
+        comparison_mode = normalize_comparison_mode(comparison_mode)
+        debug_view = normalize_debug_view(debug_view)
+        debug_crop = get_debug_crop_filter(debug_view) if is_debug_view_mode(comparison_mode) else ""
         
         # Scale filter with padding to fit each output cell while maintaining aspect ratio.
         scale_pad = (
@@ -137,14 +148,23 @@ class FFmpegEncoder:
         def make_chain(*filters: str) -> str:
             """Join non-empty filters into a valid FFmpeg chain."""
             return ",".join(filter(None, filters))
+
+        def make_split_chain(input_label: str, source_label: str, display_label: str, diff_label: str) -> str:
+            """Build input preprocessing and split chain."""
+            if debug_crop:
+                return (
+                    f"{input_label}{debug_crop}[{source_label}];"
+                    f"[{source_label}]split[{display_label}][{diff_label}]"
+                )
+            return f"{input_label}split[{display_label}][{diff_label}]"
         
         if has_third_video:
             title_third_escaped = self._escape_ffmpeg_text(title_third or "")
             
             filter_complex = (
-                # Split left/right so display and diff branches stay independent.
-                "[0:v]split[v0_display][v0_diff];"
-                "[1:v]split[v1_display][v1_diff];"
+                # Preprocess left/right so display and diff branches stay independent.
+                f"{make_split_chain('[0:v]', 'v0_src', 'v0_display', 'v0_diff')};"
+                f"{make_split_chain('[1:v]', 'v1_src', 'v1_display', 'v1_diff')};"
                 # Scale display copies to the output cell size and add titles.
                 f"[v0_display]{make_chain(scale_pad, make_drawtext(title_left_escaped))}[left];"
                 f"[v1_display]{make_chain(scale_pad, make_drawtext(title_right_escaped))}[right];"
@@ -162,9 +182,9 @@ class FFmpegEncoder:
         else:
             # Create black frame for bottom right using pad
             filter_complex = (
-                # Split left/right so display and diff branches stay independent.
-                "[0:v]split[v0_display][v0_diff];"
-                "[1:v]split[v1_display][v1_diff];"
+                # Preprocess left/right so display and diff branches stay independent.
+                f"{make_split_chain('[0:v]', 'v0_src', 'v0_display', 'v0_diff')};"
+                f"{make_split_chain('[1:v]', 'v1_src', 'v1_display', 'v1_diff')};"
                 # Scale display copies to the output cell size and add titles.
                 f"[v0_display]{make_chain(scale_pad, make_drawtext(title_left_escaped))}[left];"
                 f"[v1_display]{make_chain(scale_pad, make_drawtext(title_right_escaped))}[right];"
@@ -211,10 +231,14 @@ class FFmpegEncoder:
         gop: int = 30,
         encoder: str = "auto",
         cpu_preset: str = "veryfast",
+        comparison_mode: str = "standard",
+        debug_view: str = "display",
     ) -> List[str]:
         """Build FFmpeg command for encoding."""
         ffmpeg_path = self.finder.find_ffmpeg(self.settings.get("ffmpeg_path"))
         font_path = self.finder.find_font(self.settings.get("font_path"))
+        comparison_mode = normalize_comparison_mode(comparison_mode)
+        debug_view = normalize_debug_view(debug_view)
         
         if not ffmpeg_path:
             raise RuntimeError("FFmpeg not found")
@@ -229,7 +253,11 @@ class FFmpegEncoder:
         if title_third is None:
             title_third = self.settings.get("title_third")
         
-        has_third = video_third is not None and Path(video_third).exists()
+        has_third = (
+            not is_debug_view_mode(comparison_mode)
+            and video_third is not None
+            and Path(video_third).exists()
+        )
         
         # Get video info for building filter
         videos_to_check = {"left": video_left, "right": video_right}
@@ -251,7 +279,9 @@ class FFmpegEncoder:
             title_right=title_right,
             font_path=font_path,
             title_third=title_third,
-            has_third_video=has_third
+            has_third_video=has_third,
+            comparison_mode=comparison_mode,
+            debug_view=debug_view,
         )
         
         # Determine encoder
@@ -361,6 +391,8 @@ class FFmpegEncoder:
         gop: int = 30,
         encoder: str = "auto",
         cpu_preset: str = "veryfast",
+        comparison_mode: str = "standard",
+        debug_view: str = "display",
         progress_callback: Optional[Callable[[EncodingProgress], None]] = None,
         log_callback: Optional[Callable[[str], None]] = None,
     ) -> bool:
@@ -388,10 +420,21 @@ class FFmpegEncoder:
         self._cancelled = False
         
         # Validate videos
+        comparison_mode = normalize_comparison_mode(comparison_mode)
+        debug_view = normalize_debug_view(debug_view)
         has_third = video_third is not None and Path(video_third).exists()
-        valid, error, video_infos = self.validator.validate_videos_for_comparison(
-            video_left, video_right, video_third if has_third else None
-        )
+        if is_debug_view_mode(comparison_mode):
+            valid, error, video_infos = self.validator.validate_videos_for_debug_view(
+                video_left,
+                video_right,
+            )
+            has_third = False
+        else:
+            valid, error, video_infos = self.validator.validate_videos_for_comparison(
+                video_left,
+                video_right,
+                video_third if has_third else None,
+            )
         
         if not valid:
             if log_callback:
@@ -417,6 +460,8 @@ class FFmpegEncoder:
             gop=gop,
             encoder=encoder,
             cpu_preset=cpu_preset,
+            comparison_mode=comparison_mode,
+            debug_view=debug_view,
         )
         
         if log_callback:

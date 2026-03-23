@@ -54,6 +54,8 @@ class EncodingWorker(QThread):
         gop: int,
         encoder: str,
         cpu_preset: str,
+        comparison_mode: str,
+        debug_view: str,
     ):
         super().__init__()
         self.video_left = video_left
@@ -70,6 +72,8 @@ class EncodingWorker(QThread):
         self.gop = gop
         self.encoder = encoder
         self.cpu_preset = cpu_preset
+        self.comparison_mode = comparison_mode
+        self.debug_view = debug_view
         self._encoder = get_ffmpeg_encoder()
     
     def run(self):
@@ -89,6 +93,8 @@ class EncodingWorker(QThread):
             gop=self.gop,
             encoder=self.encoder,
             cpu_preset=self.cpu_preset,
+            comparison_mode=self.comparison_mode,
+            debug_view=self.debug_view,
             progress_callback=lambda p: self.progress_updated.emit(p),
             log_callback=lambda l: self.log_updated.emit(l),
         )
@@ -110,6 +116,8 @@ class EncodingDialog(QDialog):
         title_right: str,
         video_third: Optional[str] = None,
         title_third: str = "",
+        comparison_mode: str = "standard",
+        debug_view: str = "display",
         parent=None
     ):
         super().__init__(parent)
@@ -119,6 +127,8 @@ class EncodingDialog(QDialog):
         self.title_left = title_left
         self.title_right = title_right
         self.title_third = title_third
+        self.comparison_mode = comparison_mode
+        self.debug_view = debug_view
         
         self.settings = get_settings()
         self.encoder = get_ffmpeg_encoder()
@@ -434,11 +444,18 @@ class EncodingDialog(QDialog):
         
         # Validate videos
         has_third = self.video_third and Path(self.video_third).exists()
-        valid, error, _ = self.validator.validate_videos_for_comparison(
-            self.video_left, 
-            self.video_right,
-            self.video_third if has_third else None
-        )
+        if self.comparison_mode == "debug_view":
+            valid, error, _ = self.validator.validate_videos_for_debug_view(
+                self.video_left,
+                self.video_right,
+            )
+            has_third = False
+        else:
+            valid, error, _ = self.validator.validate_videos_for_comparison(
+                self.video_left,
+                self.video_right,
+                self.video_third if has_third else None,
+            )
         
         if not valid:
             QMessageBox.critical(self, "Validation Error", error)
@@ -473,6 +490,8 @@ class EncodingDialog(QDialog):
             gop=self.gop_spin.value(),
             encoder=self.encoder_combo.currentData(),
             cpu_preset=self.cpu_preset_combo.currentText(),
+            comparison_mode=self.comparison_mode,
+            debug_view=self.debug_view,
         )
         
         # Connect signals
