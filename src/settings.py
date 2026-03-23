@@ -37,7 +37,7 @@ class Settings:
         "output_fps": 60,
         "qp_value": 17,
         "gop_size": 30,
-        "encoder": "auto",  # "auto", "cpu", or specific HW encoder
+        "encoder": "auto",  # "auto", "cpu", or a validated HW encoder
         "cpu_preset": "veryfast",
         
         # Last used paths
@@ -150,4 +150,3 @@ def get_settings() -> Settings:
     if _settings_instance is None:
         _settings_instance = Settings()
     return _settings_instance
-

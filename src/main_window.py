@@ -619,15 +619,14 @@ class MainWindow(QMainWindow):
             "<p><b>Features:</b></p>"
             "<ul>"
             "<li>Preview comparisons with MPV</li>"
-            "<li>Encode comparisons with FFmpeg (HEVC)</li>"
-            "<li>Support for hardware-accelerated encoding</li>"
+            "<li>Encode comparisons with FFmpeg 4:4:4 output</li>"
+            "<li>Support for NVENC hardware-accelerated encoding</li>"
             "<li>Customizable titles and settings</li>"
             "</ul>"
-            "<p>Version 1.0.1</p>"
+            "<p>Version 1.0.2</p>"
         )
     
     def closeEvent(self, event):
         """Handle close event."""
         self._save_settings()
         event.accept()
-

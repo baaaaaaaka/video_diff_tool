@@ -363,7 +363,7 @@ class EncodingDialog(QDialog):
         self.encoder_combo.clear()
         
         # Add auto option
-        self.encoder_combo.addItem("Auto (Best Available)", "auto")
+        self.encoder_combo.addItem("Auto (NVENC if Available)", "auto")
         
         # Add available encoders
         for enc in encoders:
@@ -373,7 +373,7 @@ class EncodingDialog(QDialog):
         self.encode_btn.setEnabled(True)
         
         # Set saved encoder if available
-        saved_encoder = self.settings.get("encoder")
+        saved_encoder = self.encoder.normalize_encoder_id(self.settings.get("encoder"))
         for i in range(self.encoder_combo.count()):
             if self.encoder_combo.itemData(i) == saved_encoder:
                 self.encoder_combo.setCurrentIndex(i)

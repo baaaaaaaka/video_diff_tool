@@ -41,7 +41,7 @@ class FFmpegEncoder:
     """
     FFmpeg encoder for creating comparison videos.
     
-    Output format: MP4 with HEVC YUV444 8-bit
+    Output format: MP4 with YUV444-only video output
     Default settings:
     - Resolution: 2160p (3840x2160)
     - FPS: 60
@@ -51,6 +51,13 @@ class FFmpegEncoder:
     
     # CPU presets
     CPU_PRESETS = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"]
+    YUV444_SAFE_ENCODERS = {
+        EncoderType.CPU.value,
+        EncoderType.NVENC.value,
+    }
+    LEGACY_ENCODER_ALIASES = {
+        "cpu_h264_444": EncoderType.CPU.value,
+    }
     
     # Resolution presets
     RESOLUTION_PRESETS = {
@@ -69,12 +76,16 @@ class FFmpegEncoder:
     
     def get_available_encoders(self) -> List[Dict[str, str]]:
         """Get list of available encoders (CPU + HW)."""
-        encoders = [{"id": "cpu", "name": "CPU (libx265)"}]
+        encoders = [
+            {"id": EncoderType.CPU.value, "name": "CPU (libx264 H.264 4:4:4)"},
+        ]
         
         hw_encoders = self.finder.get_available_hw_encoders(
             self.finder.find_ffmpeg(self.settings.get("ffmpeg_path"))
         )
-        encoders.extend(hw_encoders)
+        encoders.extend(
+            enc for enc in hw_encoders if enc["id"] in self.YUV444_SAFE_ENCODERS
+        )
         
         return encoders
     
@@ -105,36 +116,42 @@ class FFmpegEncoder:
         title_left_escaped = self._escape_ffmpeg_text(title_left)
         title_right_escaped = self._escape_ffmpeg_text(title_right)
         
-        # Scale filter with padding to fit cell while maintaining aspect ratio
-        scale_pad = f"scale={cell_width}:{cell_height}:force_original_aspect_ratio=decrease,pad={cell_width}:{cell_height}:(ow-iw)/2:(oh-ih)/2:black"
-        
-        # Drawtext filter template
+        # Scale filter with padding to fit each output cell while maintaining aspect ratio.
+        scale_pad = (
+            f"scale={cell_width}:{cell_height}:force_original_aspect_ratio=decrease,"
+            f"pad={cell_width}:{cell_height}:(ow-iw)/2:(oh-ih)/2:black"
+        )
+
         def make_drawtext(title: str) -> str:
+            """Build a drawtext filter without leading separators."""
             if not title:
                 return ""
             return (
-                f",drawtext=fontfile='{formatted_font}':"
+                f"drawtext=fontfile='{formatted_font}':"
                 f"text='{title}':"
                 f"x=(w-text_w)/2:y=(h-text_h)-100:"
                 f"fontsize=36:fontcolor=white:"
                 f"box=1:boxcolor=black@0.5:boxborderw=5"
             )
+
+        def make_chain(*filters: str) -> str:
+            """Join non-empty filters into a valid FFmpeg chain."""
+            return ",".join(filter(None, filters))
         
         if has_third_video:
             title_third_escaped = self._escape_ffmpeg_text(title_third or "")
             
             filter_complex = (
-                # Scale and process input 0 (left video)
-                f"[0:v]{scale_pad},split[v0a][v0b];"
-                # Scale and process input 1 (right video)
-                f"[1:v]{scale_pad},split[v1a][v1b];"
-                # Scale input 2 (third video)
-                f"[2:v]{scale_pad}{make_drawtext(title_third_escaped)}[third];"
-                # Add titles to display copies
-                f"[v0a]{make_drawtext(title_left_escaped).lstrip(',')}[left];"
-                f"[v1a]{make_drawtext(title_right_escaped).lstrip(',')}[right];"
-                # Create difference blend
-                "[v0b][v1b]blend=all_mode=difference[blended];"
+                # Split left/right so display and diff branches stay independent.
+                "[0:v]split[v0_display][v0_diff];"
+                "[1:v]split[v1_display][v1_diff];"
+                # Scale display copies to the output cell size and add titles.
+                f"[v0_display]{make_chain(scale_pad, make_drawtext(title_left_escaped))}[left];"
+                f"[v1_display]{make_chain(scale_pad, make_drawtext(title_right_escaped))}[right];"
+                # Match MPV preview semantics by blending original frames before scaling.
+                f"[v0_diff][v1_diff]blend=all_mode=difference,{scale_pad}[blended];"
+                # Scale and title the optional third video.
+                f"[2:v]{make_chain(scale_pad, make_drawtext(title_third_escaped))}[third];"
                 # Stack bottom row
                 "[blended][third]hstack[down];"
                 # Stack top row
@@ -145,15 +162,14 @@ class FFmpegEncoder:
         else:
             # Create black frame for bottom right using pad
             filter_complex = (
-                # Scale and process input 0 (left video)
-                f"[0:v]{scale_pad},split[v0a][v0b];"
-                # Scale and process input 1 (right video)
-                f"[1:v]{scale_pad},split[v1a][v1b];"
-                # Add titles to display copies
-                f"[v0a]{make_drawtext(title_left_escaped).lstrip(',')}[left];"
-                f"[v1a]{make_drawtext(title_right_escaped).lstrip(',')}[right];"
-                # Create difference blend
-                "[v0b][v1b]blend=all_mode=difference[blended];"
+                # Split left/right so display and diff branches stay independent.
+                "[0:v]split[v0_display][v0_diff];"
+                "[1:v]split[v1_display][v1_diff];"
+                # Scale display copies to the output cell size and add titles.
+                f"[v0_display]{make_chain(scale_pad, make_drawtext(title_left_escaped))}[left];"
+                f"[v1_display]{make_chain(scale_pad, make_drawtext(title_right_escaped))}[right];"
+                # Match MPV preview semantics by blending original frames before scaling.
+                f"[v0_diff][v1_diff]blend=all_mode=difference,{scale_pad}[blended];"
                 # Pad blended to create black area on right (2x width)
                 f"[blended]pad=2*iw:ih:0:0:black[down];"
                 # Stack top row
@@ -163,6 +179,10 @@ class FFmpegEncoder:
             )
         
         return filter_complex
+
+    def normalize_encoder_id(self, encoder: str) -> str:
+        """Map legacy encoder ids to the current set of supported ids."""
+        return self.LEGACY_ENCODER_ALIASES.get(encoder, encoder)
     
     def _escape_ffmpeg_text(self, text: str) -> str:
         """Escape special characters for FFmpeg drawtext filter."""
@@ -256,28 +276,23 @@ class FFmpegEncoder:
         cmd.extend(["-r", str(output_fps)])
         
         # Encoding settings based on encoder type
-        if actual_encoder == "cpu":
-            # CPU encoding with libx265
+        if actual_encoder not in self.YUV444_SAFE_ENCODERS:
+            raise RuntimeError(
+                f"Encoder '{actual_encoder}' does not support the required yuv444p output."
+            )
+
+        if actual_encoder == EncoderType.CPU.value:
+            # CPU encoding with libx264 High 4:4:4 Predictive
             cmd.extend([
-                "-c:v", "libx265",
+                "-c:v", "libx264",
                 "-preset", cpu_preset,
-                "-x265-params", f"qp={qp}:keyint={gop}",
+                "-qp", str(qp),
+                "-profile:v", "high444",
                 "-pix_fmt", "yuv444p",
-                "-tag:v", "hvc1",  # For better compatibility
+                "-tag:v", "avc1",
             ])
-        elif actual_encoder == "hevc_videotoolbox":
-            # macOS VideoToolbox
-            # Note: VideoToolbox doesn't support YUV444, use YUV420 with high quality
-            cmd.extend([
-                "-c:v", "hevc_videotoolbox",
-                "-q:v", str(max(1, 100 - qp * 2)),  # Convert QP to quality scale (higher is better for VT)
-                "-profile:v", "main",  # main profile for compatibility
-                "-pix_fmt", "yuv420p",  # VT doesn't support 444
-                "-tag:v", "hvc1",
-            ])
-            # GOP setting for VideoToolbox
             cmd.extend(["-g", str(gop)])
-        elif actual_encoder == "hevc_nvenc":
+        elif actual_encoder == EncoderType.NVENC.value:
             # NVIDIA NVENC
             cmd.extend([
                 "-c:v", "hevc_nvenc",
@@ -290,39 +305,17 @@ class FFmpegEncoder:
                 "-tag:v", "hvc1",
             ])
             cmd.extend(["-g", str(gop)])
-        elif actual_encoder == "hevc_amf":
-            # AMD AMF
-            cmd.extend([
-                "-c:v", "hevc_amf",
-                "-quality", "quality",
-                "-rc", "cqp",
-                "-qp_i", str(qp),
-                "-qp_p", str(qp),
-                "-profile:v", "main",
-                "-pix_fmt", "yuv420p",  # AMF doesn't support 444
-                "-tag:v", "hvc1",
-            ])
-            cmd.extend(["-g", str(gop)])
-        elif actual_encoder == "hevc_qsv":
-            # Intel QuickSync
-            cmd.extend([
-                "-c:v", "hevc_qsv",
-                "-preset", "veryslow",  # Highest quality
-                "-q:v", str(qp),        # Use CQP (Quantization Parameter)
-                "-profile:v", "main",
-                "-pix_fmt", "yuv420p",  # QSV HEVC doesn't support 444
-                "-tag:v", "hvc1",
-            ])
-            cmd.extend(["-g", str(gop)])
         else:
             # Fallback to CPU
             cmd.extend([
-                "-c:v", "libx265",
+                "-c:v", "libx264",
                 "-preset", cpu_preset,
-                "-x265-params", f"qp={qp}:keyint={gop}",
+                "-qp", str(qp),
+                "-profile:v", "high444",
                 "-pix_fmt", "yuv444p",
-                "-tag:v", "hvc1",
+                "-tag:v", "avc1",
             ])
+            cmd.extend(["-g", str(gop)])
         
         # No audio
         cmd.extend(["-an"])
@@ -337,18 +330,20 @@ class FFmpegEncoder:
     
     def _resolve_encoder(self, encoder: str) -> str:
         """Resolve 'auto' encoder to best available."""
+        encoder = self.normalize_encoder_id(encoder)
         if encoder != "auto":
             return encoder
         
-        # Try to find best available HW encoder
+        # Try to find the best available HW encoder that preserves yuv444p.
         hw_encoders = self.finder.get_available_hw_encoders(
             self.finder.find_ffmpeg(self.settings.get("ffmpeg_path"))
         )
+
+        for enc in hw_encoders:
+            if enc["id"] in self.YUV444_SAFE_ENCODERS:
+                return enc["id"]
         
-        if hw_encoders:
-            return hw_encoders[0]["id"]
-        
-        return "cpu"
+        return EncoderType.CPU.value
     
     def encode(
         self,
@@ -548,4 +543,3 @@ def get_ffmpeg_encoder() -> FFmpegEncoder:
     if _encoder_instance is None:
         _encoder_instance = FFmpegEncoder()
     return _encoder_instance
-

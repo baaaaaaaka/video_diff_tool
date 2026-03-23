@@ -205,9 +205,14 @@ class BinaryFinder:
     def _check_encoder_usability(self, ffmpeg_path: str, encoder: str) -> bool:
         """Check if an encoder is actually usable on the system."""
         try:
+            pix_fmt = "yuv420p"
+            profile = "main"
+            if encoder == "hevc_nvenc":
+                pix_fmt = "yuv444p"
+                profile = "rext"
+
             # Run a minimal encoding test: 1 frame of black color
             # Use 256x256 to satisfy alignment requirements of some HW encoders (128x128 is too small for some NVENC)
-            # Explicitly set pixel format to yuv420p (universally supported fallback)
             cmd = [
                 ffmpeg_path,
                 "-y",
@@ -215,8 +220,8 @@ class BinaryFinder:
                 "-f", "lavfi",
                 "-i", "color=black:s=256x256:r=1",
                 "-c:v", encoder,
-                "-pix_fmt", "yuv420p",
-                "-profile:v", "main",
+                "-pix_fmt", pix_fmt,
+                "-profile:v", profile,
                 "-frames:v", "1",
                 "-f", "null",
                 "-"

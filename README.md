@@ -11,7 +11,7 @@ A cross-platform GUI tool for comparing videos side-by-side with difference visu
   
   ![MPV Comparison](screenshot/mpv_compare.png)
 
-- **FFmpeg Encoding**: Encode comparison videos with hardware-accelerated HEVC
+- **FFmpeg Encoding**: Encode comparison videos with H.264 4:4:4 output, or HEVC 4:4:4 via NVENC when available
 - **Optional Third Video**: Add a third video to the bottom-right quadrant
 - **Drag & Drop**: Easy video file selection with drag and drop support
 - **Customizable Titles**: Add custom overlay titles to each video
@@ -98,7 +98,7 @@ python main.py
 
 - **Resolution**: 2160p (default), 1080p, 720p, or custom
 - **FPS**: 60 fps (default), configurable
-- **Encoder**: Auto-selects best available (VideoToolbox, NVENC, AMF, QSV, or CPU)
+- **Encoder**: Auto-selects NVENC HEVC 4:4:4 when available, otherwise falls back to CPU H.264 4:4:4
 - **Quality**: QP 17 (default), configurable
 - **GOP**: 30 (default), configurable
 
@@ -113,18 +113,15 @@ Access settings via **File → Settings** to configure:
 ## Encoding Details
 
 ### Default Encoding Settings
-- **Codec**: HEVC (H.265)
-- **Pixel Format**: YUV444P (CPU), YUV420P (HW)
+- **Codec**: H.264 High 4:4:4 Predictive by default, or HEVC 4:4:4 via NVENC when available
+- **Pixel Format**: YUV444P only
 - **Resolution**: 3840×2160 (2160p)
 - **Frame Rate**: 60 fps
 - **Quality**: QP 17
 - **GOP Size**: 30
 
 ### Hardware Encoders Supported
-- **macOS**: VideoToolbox (hevc_videotoolbox)
-- **NVIDIA**: NVENC (hevc_nvenc)
-- **AMD**: AMF (hevc_amf)
-- **Intel**: QuickSync (hevc_qsv)
+- **NVIDIA**: NVENC (hevc_nvenc), when 4:4:4 encoding support is available
 
 ### Video Scaling
 - Input videos are scaled to fit 1/2 of output resolution
@@ -151,4 +148,3 @@ Access settings via **File → Settings** to configure:
 ## License
 
 MIT License
-
