@@ -7,7 +7,7 @@ from pathlib import Path
 
 # Analyze the project structure
 block_cipher = None
-spec_dir = Path(__file__).resolve().parent
+spec_dir = Path(globals().get("SPECPATH", Path.cwd() / "build_resources")).resolve()
 project_root = spec_dir.parent
 assets_dir = spec_dir / "assets"
 
