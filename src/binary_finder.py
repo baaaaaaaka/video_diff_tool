@@ -57,6 +57,11 @@ class BinaryFinder:
             "/Library/Fonts/Arial.ttf",
             "/System/Library/Fonts/Supplemental/Arial.ttf",
         ],
+        "Linux": [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        ],
         "Windows": [
             r"C:\Windows\Fonts\arial.ttf",
             r"C:\Windows\Fonts\Arial.ttf",
@@ -103,6 +108,20 @@ class BinaryFinder:
         for path in paths:
             if Path(path).exists():
                 return path
+
+        if self.system == "Linux":
+            try:
+                result = subprocess.run(
+                    ["fc-match", "--format", "%{file}\n", "sans"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                candidate = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+                if candidate and Path(candidate).exists():
+                    return candidate
+            except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError, IndexError):
+                pass
         
         return None
     

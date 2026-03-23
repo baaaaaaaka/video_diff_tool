@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing git tag to build and release, for example v1.3.0 or v1.4.0-rc1"
+        description: "Existing git tag to build and release, for example v1.4.0 or v1.4.0-rc2"
         required: true
         type: string
 
@@ -47,7 +47,7 @@ jobs:
           fi
 
           if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Expected a semantic version tag like v1.3.0 or v1.4.0-rc1, got: ${tag}" >&2
+            echo "Expected a semantic version tag like v1.4.0 or v1.4.0-rc2, got: ${tag}" >&2
             exit 1
           fi
 
@@ -58,8 +58,20 @@ jobs:
             prerelease="true"
           fi
 
-          if ! grep -Fq "Version ${version}</p>" src/main_window.py; then
-            echo "Version string in src/main_window.py does not match tag ${tag}" >&2
+          app_version=$(python - <<'PY'
+from pathlib import Path
+import re
+
+content = Path("src/app_metadata.py").read_text(encoding="utf-8")
+match = re.search(r'^APP_VERSION = "([^"]+)"$', content, re.MULTILINE)
+if not match:
+    raise SystemExit("APP_VERSION not found in src/app_metadata.py")
+print(match.group(1))
+PY
+)
+
+          if [[ "${app_version}" != "${version}" ]]; then
+            echo "Version string in src/app_metadata.py does not match tag ${tag}" >&2
             exit 1
           fi
 
@@ -67,10 +79,70 @@ jobs:
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
 
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-14
+    env:
+      QT_QPA_PLATFORM: ${{ matrix.os == 'ubuntu-latest' && 'offscreen' || '' }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.release_tag }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Linux system dependencies
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg mpv fonts-dejavu-core
+
+      - name: Install macOS system dependencies
+        if: matrix.os == 'macos-14'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install ffmpeg mpv
+
+      - name: Install Windows system dependencies
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          choco install ffmpeg mpv -y --no-progress
+
+      - name: Install Python dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run test suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          pytest -q
+
   build-macos:
     name: Build macOS arm64
     runs-on: macos-14
-    needs: prepare
+    needs:
+      - prepare
+      - test
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -113,7 +185,9 @@ jobs:
   build-windows:
     name: Build Windows x64
     runs-on: windows-latest
-    needs: prepare
+    needs:
+      - prepare
+      - test
     steps:
       - name: Check out source
         uses: actions/checkout@v4

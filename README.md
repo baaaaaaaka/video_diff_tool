@@ -14,6 +14,7 @@ A cross-platform GUI tool for comparing videos side-by-side with difference visu
 - **FFmpeg Encoding**: Encode comparison videos with H.264 4:4:4 output, or HEVC 4:4:4 via NVENC when available
 - **Optional Third Video**: Add a third video to the bottom-right quadrant
 - **Debug View Mode**: Crop 4K debug videos down to `Display Image`, `Flow`, `Mask`, or `Warped` panels before preview and encoding
+- **In-App Updates**: Packaged macOS and Windows builds can detect newer GitHub releases, update in place, and restart automatically
 - **Drag & Drop**: Easy video file selection with drag and drop support
 - **Customizable Titles**: Add custom overlay titles to each video
 - **Cross-platform**: Works on macOS and Windows
@@ -41,6 +42,11 @@ A cross-platform GUI tool for comparing videos side-by-side with difference visu
 ### Python Dependencies
 ```bash
 pip install -r requirements.txt
+```
+
+### Developer Test Dependencies
+```bash
+pip install -r requirements-dev.txt
 ```
 
 ## Installation
@@ -92,6 +98,21 @@ Pre-release tags such as `v1.4.0-rc1` are also supported and will be published a
 - **Release Guard**: The workflow checks that the tag version matches the About dialog version string before publishing
 
 You can also rerun the release flow manually with **Actions → Release → Run workflow** and provide an existing tag.
+
+## Testing
+
+Run the full local test suite with:
+
+```bash
+pytest -q
+```
+
+GitHub Actions runs:
+
+- Cross-platform unit and GUI tests on Ubuntu, Windows, and macOS
+- Smoke tests using real `ffmpeg` and `mpv` binaries
+- Packaging smoke builds on macOS and Windows using PyInstaller
+- Release builds only after the full release test matrix passes
 
 ### Basic Workflow
 

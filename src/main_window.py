@@ -8,16 +8,18 @@ import subprocess
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QGroupBox, QCheckBox, QMessageBox, QStatusBar,
-    QComboBox,
+    QComboBox, QProgressDialog,
     QApplication
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, QThread, QTimer
 from PyQt6.QtGui import QAction, QIcon
 
+from .app_metadata import APP_NAME, APP_VERSION
 from .settings import get_settings
 from .binary_finder import get_binary_finder
 from .mpv_launcher import get_mpv_launcher
 from .video_validator import get_video_validator
+from .update_manager import ReleaseInfo, UpdateManager
 from .comparison_mode import (
     get_comparison_mode_options,
     get_debug_view_name,
@@ -27,6 +29,51 @@ from .comparison_mode import (
 from .widgets.video_drop_zone import VideoDropZone
 from .widgets.encoding_dialog import EncodingDialog
 from .widgets.settings_dialog import SettingsDialog
+
+
+class UpdateCheckWorker(QThread):
+    """Background worker for update checks."""
+
+    finished_check = pyqtSignal(object)
+    failed_check = pyqtSignal(str)
+
+    def __init__(self, manager: UpdateManager):
+        super().__init__()
+        self.manager = manager
+
+    def run(self) -> None:
+        try:
+            release = self.manager.get_latest_compatible_release()
+        except RuntimeError as exc:
+            self.failed_check.emit(str(exc))
+            return
+
+        self.finished_check.emit(release)
+
+
+class UpdateDownloadWorker(QThread):
+    """Background worker for update downloads."""
+
+    progress_changed = pyqtSignal(int, int)
+    finished_download = pyqtSignal(str)
+    failed_download = pyqtSignal(str)
+
+    def __init__(self, manager: UpdateManager, release: ReleaseInfo):
+        super().__init__()
+        self.manager = manager
+        self.release = release
+
+    def run(self) -> None:
+        try:
+            archive_path = self.manager.download_release_asset(
+                self.release,
+                progress_callback=lambda downloaded, total: self.progress_changed.emit(downloaded, total),
+            )
+        except RuntimeError as exc:
+            self.failed_download.emit(str(exc))
+            return
+
+        self.finished_download.emit(str(archive_path))
 
 
 class MainWindow(QMainWindow):
@@ -41,16 +88,22 @@ class MainWindow(QMainWindow):
         self.finder = get_binary_finder()
         self.mpv_launcher = get_mpv_launcher()
         self.validator = get_video_validator()
+        self.update_manager = UpdateManager()
+        self._update_check_worker: Optional[UpdateCheckWorker] = None
+        self._update_download_worker: Optional[UpdateDownloadWorker] = None
+        self._update_progress_dialog: Optional[QProgressDialog] = None
+        self._pending_release: Optional[ReleaseInfo] = None
         
         # Connect error signal
         self.mpv_error_signal.connect(self._show_mpv_error)
         
-        self.setWindowTitle("Video Diff Tool")
+        self.setWindowTitle(APP_NAME)
         self._setup_ui()
         self._setup_menu()
         self._load_settings()
         self._update_status()
         self._check_binaries_and_prompt()
+        QTimer.singleShot(0, self._start_update_check)
     
     def _check_binaries_and_prompt(self):
         """Check for required binaries and prompt user if missing."""
@@ -98,7 +151,7 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(20, 20, 20, 20)
         
         # Header
-        header = QLabel("Video Comparison Tool")
+        header = QLabel(APP_NAME)
         header.setStyleSheet("""
             font-size: 24px;
             font-weight: bold;
@@ -107,6 +160,28 @@ class MainWindow(QMainWindow):
         """)
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(header)
+
+        self.update_btn = QPushButton()
+        self.update_btn.setVisible(False)
+        self.update_btn.clicked.connect(self._on_update_clicked)
+        self.update_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ff8c42;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 18px;
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #f07620;
+            }
+            QPushButton:disabled {
+                background-color: #ccc;
+            }
+        """)
+        main_layout.addWidget(self.update_btn, alignment=Qt.AlignmentFlag.AlignRight)
         
         # Video inputs section
         videos_group = QGroupBox("Video Inputs")
@@ -402,6 +477,10 @@ class MainWindow(QMainWindow):
         # Help menu
         help_menu = menubar.addMenu("Help")
         
+        check_updates_action = QAction("Check for Updates", self)
+        check_updates_action.triggered.connect(lambda: self._start_update_check(manual=True))
+        help_menu.addAction(check_updates_action)
+
         about_action = QAction("About", self)
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
@@ -596,6 +675,151 @@ class MainWindow(QMainWindow):
             status_parts.append("Font: ✗")
         
         self.status_bar.showMessage(" | ".join(status_parts))
+
+    def _start_update_check(self, manual: bool = False):
+        """Check GitHub for a newer packaged release."""
+        if not self.update_manager.get_release_asset_suffix():
+            if manual:
+                QMessageBox.information(
+                    self,
+                    "Updates Unavailable",
+                    "Automatic updates are only available for packaged macOS arm64 and Windows x64 releases.",
+                )
+            return
+
+        if self._update_check_worker and self._update_check_worker.isRunning():
+            return
+
+        self._update_check_worker = UpdateCheckWorker(self.update_manager)
+        self._update_check_worker.finished_check.connect(
+            lambda release, manual=manual: self._on_update_check_finished(release, manual)
+        )
+        self._update_check_worker.failed_check.connect(
+            lambda error, manual=manual: self._on_update_check_failed(error, manual)
+        )
+        self._update_check_worker.start()
+
+    def _on_update_check_finished(self, release: Optional[ReleaseInfo], manual: bool):
+        """Handle a completed update check."""
+        self._pending_release = release
+        if release is None:
+            self.update_btn.setVisible(False)
+            if manual:
+                QMessageBox.information(
+                    self,
+                    "No Updates",
+                    f"You are already on the latest compatible release ({APP_VERSION}).",
+                )
+            return
+
+        if not self.update_manager.supports_auto_update():
+            self.update_btn.setVisible(False)
+            if manual:
+                QMessageBox.information(
+                    self,
+                    "Update Available",
+                    (
+                        f"A newer packaged release is available: {release.tag_name}\n\n"
+                        "Automatic installation is only supported from packaged macOS arm64 and Windows x64 builds."
+                    ),
+                )
+            return
+
+        self.update_btn.setText(f"Update to {release.tag_name}")
+        self.update_btn.setToolTip(f"Download and install {release.tag_name}, then restart.")
+        self.update_btn.setEnabled(True)
+        self.update_btn.setVisible(True)
+
+        if manual:
+            QMessageBox.information(
+                self,
+                "Update Available",
+                f"A newer release is available: {release.tag_name}",
+            )
+
+    def _on_update_check_failed(self, error: str, manual: bool):
+        """Handle update check failures."""
+        if manual:
+            QMessageBox.warning(self, "Update Check Failed", error)
+
+    def _on_update_clicked(self):
+        """Download and install the discovered update."""
+        release = self._pending_release
+        if release is None:
+            return
+
+        if not self.update_manager.supports_auto_update():
+            QMessageBox.information(
+                self,
+                "Automatic Updates Unavailable",
+                "This build is not a packaged app bundle, so it cannot replace itself automatically.",
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Install Update",
+            f"Download {release.tag_name}, replace the current app, and restart automatically?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self.update_btn.setEnabled(False)
+        self._update_progress_dialog = QProgressDialog("Downloading update...", "", 0, 100, self)
+        self._update_progress_dialog.setWindowTitle("Updating")
+        self._update_progress_dialog.setCancelButton(None)
+        self._update_progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self._update_progress_dialog.setMinimumDuration(0)
+        self._update_progress_dialog.show()
+
+        self._update_download_worker = UpdateDownloadWorker(self.update_manager, release)
+        self._update_download_worker.progress_changed.connect(self._on_update_download_progress)
+        self._update_download_worker.finished_download.connect(self._on_update_download_finished)
+        self._update_download_worker.failed_download.connect(self._on_update_download_failed)
+        self._update_download_worker.start()
+
+    def _on_update_download_progress(self, downloaded: int, total: int):
+        """Update download progress text."""
+        if not self._update_progress_dialog:
+            return
+
+        if total > 0:
+            percent = int(downloaded * 100 / total)
+            self._update_progress_dialog.setMaximum(100)
+            self._update_progress_dialog.setValue(percent)
+            self._update_progress_dialog.setLabelText(f"Downloading update... {percent}%")
+        else:
+            self._update_progress_dialog.setMaximum(0)
+            self._update_progress_dialog.setLabelText("Downloading update...")
+
+    def _on_update_download_finished(self, archive_path: str):
+        """Apply the downloaded update and restart."""
+        if self._update_progress_dialog:
+            self._update_progress_dialog.close()
+            self._update_progress_dialog = None
+
+        try:
+            self.update_manager.prepare_update_and_restart(Path(archive_path))
+        except RuntimeError as exc:
+            self._on_update_download_failed(str(exc))
+            return
+
+        QMessageBox.information(
+            self,
+            "Restarting",
+            "The update has been downloaded. The application will now restart to finish installing it.",
+        )
+        QTimer.singleShot(0, QApplication.instance().quit)
+
+    def _on_update_download_failed(self, error: str):
+        """Handle update download failures."""
+        if self._update_progress_dialog:
+            self._update_progress_dialog.close()
+            self._update_progress_dialog = None
+
+        self.update_btn.setEnabled(True)
+        QMessageBox.warning(self, "Update Failed", error)
     
     def _monitor_mpv_process(self, proc: subprocess.Popen):
         """Monitor MPV process for immediate startup errors."""
@@ -717,8 +941,8 @@ class MainWindow(QMainWindow):
         """Show about dialog."""
         QMessageBox.about(
             self,
-            "About Video Diff Tool",
-            "<h2>Video Diff Tool</h2>"
+            f"About {APP_NAME}",
+            f"<h2>{APP_NAME}</h2>"
             "<p>A tool for comparing videos side-by-side with difference visualization.</p>"
             "<p><b>Features:</b></p>"
             "<ul>"
@@ -726,9 +950,10 @@ class MainWindow(QMainWindow):
             "<li>Encode comparisons with FFmpeg 4:4:4 output</li>"
             "<li>Support for NVENC hardware-accelerated encoding</li>"
             "<li>Crop 4K debug videos to Display, Flow, Mask, or Warped panels</li>"
+            "<li>Check GitHub for packaged app updates</li>"
             "<li>Customizable titles and settings</li>"
             "</ul>"
-            "<p>Version 1.4.0-rc1</p>"
+            f"<p>Version {APP_VERSION}</p>"
         )
     
     def closeEvent(self, event):

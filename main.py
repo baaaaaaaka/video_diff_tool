@@ -25,6 +25,7 @@ try:
     from PyQt6.QtWidgets import QApplication
     from PyQt6.QtCore import Qt
     from PyQt6.QtGui import QPalette, QColor, QFont
+    from src.app_metadata import APP_NAME
     from src.main_window import MainWindow
 except ImportError as e:
     print("CRITICAL ERROR: Failed to import PyQt6 or application modules.")
@@ -86,7 +87,7 @@ def main():
     """Main entry point."""
     # Create application
     app = QApplication(sys.argv)
-    app.setApplicationName("Video Diff Tool")
+    app.setApplicationName(APP_NAME)
     app.setOrganizationName("VideoDiffTool")
     
     # Setup light theme
