@@ -107,6 +107,7 @@ def test_ffmpeg_encoder_smoke_standard_and_debug(tmp_path):
     settings.set("font_path", font_path)
 
     encoder = FFmpegEncoder()
+    logs: list[str] = []
 
     left_video, right_video = _make_standard_videos(tmp_path, ffmpeg_path)
     standard_output = tmp_path / "standard.mp4"
@@ -124,11 +125,13 @@ def test_ffmpeg_encoder_smoke_standard_and_debug(tmp_path):
         encoder="cpu",
         cpu_preset="ultrafast",
         comparison_mode="standard",
-    )
+        log_callback=logs.append,
+    ), "".join(logs)
     assert standard_output.exists()
 
     debug_left, debug_right = _make_debug_videos(tmp_path, ffmpeg_path)
     debug_output = tmp_path / "debug.mp4"
+    logs.clear()
     assert encoder.encode(
         video_left=str(debug_left),
         video_right=str(debug_right),
@@ -144,7 +147,8 @@ def test_ffmpeg_encoder_smoke_standard_and_debug(tmp_path):
         cpu_preset="ultrafast",
         comparison_mode="debug_view",
         debug_view="flow",
-    )
+        log_callback=logs.append,
+    ), "".join(logs)
     assert debug_output.exists()
 
 

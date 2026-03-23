@@ -1,6 +1,6 @@
 """Unit tests for release versioning and update selection."""
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from src.update_manager import (
     ReleaseVersion,
@@ -120,8 +120,8 @@ def test_latest_compatible_release_skips_prerelease_for_stable_build(monkeypatch
 def test_macos_update_script_contains_expected_paths():
     script = _build_macos_update_script(
         current_pid=123,
-        source_app=Path("/tmp/update/VideoDiffTool.app"),
-        target_app=Path("/Applications/VideoDiffTool.app"),
+        source_app=PurePosixPath("/tmp/update/VideoDiffTool.app"),
+        target_app=PurePosixPath("/Applications/VideoDiffTool.app"),
     )
 
     assert 'PID="123"' in script

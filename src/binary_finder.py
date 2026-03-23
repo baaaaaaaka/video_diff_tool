@@ -52,10 +52,10 @@ class BinaryFinder:
     # Font paths by OS
     FONT_PATHS = {
         "Darwin": [
-            "/System/Library/Fonts/Helvetica.ttc",
-            "/System/Library/Fonts/HelveticaNeue.ttc",
             "/Library/Fonts/Arial.ttf",
             "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/System/Library/Fonts/HelveticaNeue.ttc",
         ],
         "Linux": [
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -105,9 +105,14 @@ class BinaryFinder:
         
         # Check OS-specific paths
         paths = self.FONT_PATHS.get(self.system, [])
-        for path in paths:
-            if Path(path).exists():
-                return path
+        existing_paths = [path for path in paths if Path(path).exists()]
+
+        if self.system == "Darwin":
+            # FFmpeg drawtext is more reliable with TTF than TTC collections.
+            existing_paths.sort(key=lambda path: Path(path).suffix.lower() != ".ttf")
+
+        for path in existing_paths:
+            return path
 
         if self.system == "Linux":
             try:
