@@ -623,7 +623,7 @@ class MainWindow(QMainWindow):
             "<li>Support for NVENC hardware-accelerated encoding</li>"
             "<li>Customizable titles and settings</li>"
             "</ul>"
-            "<p>Version 1.0.2</p>"
+            "<p>Version 1.3.0</p>"
         )
     
     def closeEvent(self, event):
