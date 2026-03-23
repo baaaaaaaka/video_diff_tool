@@ -68,10 +68,46 @@ jobs:
           set -euo pipefail
           pytest -q
 
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Linux system dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg mpv fonts-dejavu-core
+
+      - name: Install Python dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run coverage suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          pytest --cov=src --cov-report=term-missing --cov-fail-under=75
+
   package-smoke:
     name: Package Smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: test
+    needs:
+      - test
+      - coverage
     strategy:
       fail-fast: false
       matrix:

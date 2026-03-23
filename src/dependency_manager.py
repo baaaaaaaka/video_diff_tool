@@ -3,9 +3,15 @@
 import sys
 import subprocess
 import importlib.metadata
-import pkg_resources
 from pathlib import Path
 from typing import List, Tuple
+
+from packaging.requirements import Requirement
+
+try:
+    import pkg_resources
+except ImportError:  # pragma: no cover - exercised on Python environments without setuptools
+    pkg_resources = None
 
 class DependencyManager:
     """Manages application dependencies."""
@@ -30,23 +36,30 @@ class DependencyManager:
             
         for req in requirements:
             try:
-                # Parse requirement (e.g. "PyQt6>=6.5.0" -> "PyQt6")
-                # Using pkg_resources to parse complex requirements safely
-                parsed_req = list(pkg_resources.parse_requirements(req))[0]
-                package_name = parsed_req.project_name
-                
-                try:
-                    dist = pkg_resources.get_distribution(package_name)
-                    # Check version if specified
-                    if parsed_req.specs:
-                        if not parsed_req.__contains__(dist):
+                # Prefer lightweight stdlib + packaging metadata checks. Fall back to
+                # pkg_resources when it is available and already present in the runtime.
+                if pkg_resources is not None:
+                    parsed_req = list(pkg_resources.parse_requirements(req))[0]
+                    package_name = parsed_req.project_name
+
+                    try:
+                        dist = pkg_resources.get_distribution(package_name)
+                        if parsed_req.specs and not parsed_req.__contains__(dist):
                             missing.append(req)
                         else:
                             installed.append(req)
-                    else:
-                        installed.append(req)
-                except pkg_resources.DistributionNotFound:
+                        continue
+                    except pkg_resources.DistributionNotFound:
+                        missing.append(req)
+                        continue
+
+                parsed_req = Requirement(req)
+                package_name = parsed_req.name
+                version = importlib.metadata.version(package_name)
+                if parsed_req.specifier and not parsed_req.specifier.contains(version, prereleases=True):
                     missing.append(req)
+                else:
+                    installed.append(req)
                     
             except Exception as e:
                 print(f"Error checking requirement '{req}': {e}")
@@ -111,6 +124,5 @@ def check_and_install_dependencies():
                 sys.exit(1)
     else:
         print("Warning: requirements.txt not found. Skipping dependency check.")
-
 
 
