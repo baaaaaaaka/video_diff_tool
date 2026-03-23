@@ -39,6 +39,7 @@ def test_launch_builds_windowed_command_with_screenshot_directory(tmp_path, monk
 
     launcher = MPVLauncher()
     monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.setattr("src.mpv_launcher.os.path.expanduser", lambda value: str(desktop_dir) if value == "~/Desktop" else value)
     monkeypatch.setattr(launcher.finder, "find_mpv", lambda custom_path="": "/usr/bin/mpv")
     monkeypatch.setattr(launcher.finder, "find_font", lambda custom_path="": str(font_path))
 

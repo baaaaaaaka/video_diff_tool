@@ -69,7 +69,7 @@ def test_video_drop_zone_drag_drop_browse_and_disable(qtbot, monkeypatch, tmp_pa
     drop_event = FakeDropEvent(str(video_path))
     zone.dropEvent(drop_event)
     assert drop_event.accepted is True
-    assert zone.get_video_path() == str(video_path)
+    assert Path(zone.get_video_path()) == video_path
 
     monkeypatch.setattr(
         "src.widgets.video_drop_zone.QFileDialog.getOpenFileName",
@@ -77,7 +77,7 @@ def test_video_drop_zone_drag_drop_browse_and_disable(qtbot, monkeypatch, tmp_pa
     )
     zone.clear()
     zone._browse_file()
-    assert zone.get_video_path() == str(video_path)
+    assert Path(zone.get_video_path()) == video_path
 
     zone.set_enabled_state(False)
     assert zone.browse_btn.isEnabled() is False
