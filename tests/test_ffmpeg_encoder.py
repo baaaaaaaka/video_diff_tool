@@ -24,6 +24,7 @@ def _build_encoder(tmp_path: Path, monkeypatch) -> FFmpegEncoder:
     font_path.write_text("dummy", encoding="utf-8")
     monkeypatch.setattr(encoder.finder, "find_ffmpeg", lambda custom_path="": "/usr/bin/ffmpeg")
     monkeypatch.setattr(encoder.finder, "find_font", lambda custom_path="": str(font_path))
+    monkeypatch.setattr(encoder.finder, "has_ffmpeg_filter", lambda ffmpeg_path, filter_name: True)
     monkeypatch.setattr(
         encoder.validator,
         "get_video_info",
@@ -67,3 +68,21 @@ def test_build_encoding_command_keeps_standard_mode_uncropped(tmp_path, monkeypa
     command_str = " ".join(command)
     assert "crop=iw/2:ih/2" not in command_str
     assert "[0:v]split" in command_str or "[0:v]split" in command[command.index("-filter_complex") + 1]
+
+
+def test_build_encoding_command_skips_drawtext_when_filter_is_unavailable(tmp_path, monkeypatch):
+    encoder = _build_encoder(tmp_path, monkeypatch)
+    monkeypatch.setattr(encoder.finder, "has_ffmpeg_filter", lambda ffmpeg_path, filter_name: False)
+
+    command = encoder.build_encoding_command(
+        video_left="left.mp4",
+        video_right="right.mp4",
+        output_path="out.mp4",
+        title_left="Candidate",
+        title_right="Baseline",
+        encoder="cpu",
+        comparison_mode="standard",
+    )
+
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "drawtext=" not in filter_complex

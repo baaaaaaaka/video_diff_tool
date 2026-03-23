@@ -79,6 +79,7 @@ class FFmpegEncoder:
         self.validator = get_video_validator()
         self._process: Optional[subprocess.Popen] = None
         self._cancelled = False
+        self._last_title_warning: Optional[str] = None
     
     def get_available_encoders(self) -> List[Dict[str, str]]:
         """Get list of available encoders (CPU + HW)."""
@@ -107,6 +108,7 @@ class FFmpegEncoder:
         has_third_video: bool = False,
         comparison_mode: str = "standard",
         debug_view: str = "display",
+        enable_titles: bool = True,
     ) -> str:
         """
         Build FFmpeg filter complex for encoding.
@@ -118,7 +120,7 @@ class FFmpegEncoder:
         cell_height = output_height // 2
         
         # Format font path for FFmpeg
-        formatted_font = self.finder.format_font_path_for_ffmpeg(font_path)
+        formatted_font = self.finder.format_font_path_for_ffmpeg(font_path) if enable_titles else ""
         
         # Escape special characters
         title_left_escaped = self._escape_ffmpeg_text(title_left)
@@ -135,7 +137,7 @@ class FFmpegEncoder:
 
         def make_drawtext(title: str) -> str:
             """Build a drawtext filter without leading separators."""
-            if not title:
+            if not enable_titles or not title:
                 return ""
             return (
                 f"drawtext=fontfile='{formatted_font}':"
@@ -239,11 +241,10 @@ class FFmpegEncoder:
         font_path = self.finder.find_font(self.settings.get("font_path"))
         comparison_mode = normalize_comparison_mode(comparison_mode)
         debug_view = normalize_debug_view(debug_view)
+        self._last_title_warning = None
         
         if not ffmpeg_path:
             raise RuntimeError("FFmpeg not found")
-        if not font_path:
-            raise RuntimeError("Font file not found")
         
         # Get titles from settings if not provided
         if title_left is None:
@@ -258,6 +259,19 @@ class FFmpegEncoder:
             and video_third is not None
             and Path(video_third).exists()
         )
+
+        enable_titles = True
+        title_warning = self._get_title_overlay_warning(
+            ffmpeg_path=ffmpeg_path,
+            font_path=font_path,
+            title_left=title_left,
+            title_right=title_right,
+            title_third=title_third,
+            has_third=has_third,
+        )
+        if title_warning:
+            enable_titles = False
+            self._last_title_warning = title_warning
         
         # Get video info for building filter
         videos_to_check = {"left": video_left, "right": video_right}
@@ -282,6 +296,7 @@ class FFmpegEncoder:
             has_third_video=has_third,
             comparison_mode=comparison_mode,
             debug_view=debug_view,
+            enable_titles=enable_titles,
         )
         
         # Determine encoder
@@ -357,6 +372,29 @@ class FFmpegEncoder:
         cmd.append(output_path)
         
         return cmd
+
+    def _get_title_overlay_warning(
+        self,
+        ffmpeg_path: str,
+        font_path: Optional[str],
+        title_left: Optional[str],
+        title_right: Optional[str],
+        title_third: Optional[str],
+        has_third: bool,
+    ) -> Optional[str]:
+        """Return a warning string when title overlays cannot be applied."""
+
+        titles_requested = bool(title_left or title_right or (title_third if has_third else ""))
+        if not titles_requested:
+            return None
+
+        if not self.finder.has_ffmpeg_filter(ffmpeg_path, "drawtext"):
+            return "FFmpeg drawtext filter is unavailable; encoding without title overlays."
+
+        if not font_path:
+            return "No font file was found; encoding without title overlays."
+
+        return None
     
     def _resolve_encoder(self, encoder: str) -> str:
         """Resolve 'auto' encoder to best available."""
@@ -467,6 +505,8 @@ class FFmpegEncoder:
         if log_callback:
             log_callback(f"Command: {' '.join(cmd)}\n")
             log_callback("-" * 50 + "\n")
+            if self._last_title_warning:
+                log_callback(f"WARNING: {self._last_title_warning}\n")
         
         try:
             # Start FFmpeg process

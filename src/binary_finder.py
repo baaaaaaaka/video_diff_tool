@@ -85,6 +85,7 @@ class BinaryFinder:
         """Initialize binary finder."""
         self.system = platform.system()
         self._hw_encoders_cache: Optional[List[Dict[str, str]]] = None
+        self._ffmpeg_filter_cache: Dict[Tuple[str, str], bool] = {}
     
     def find_mpv(self, custom_path: str = "") -> Optional[str]:
         """Find mpv binary."""
@@ -225,6 +226,29 @@ class BinaryFinder:
         
         self._hw_encoders_cache = encoders
         return encoders
+
+    def has_ffmpeg_filter(self, ffmpeg_path: str, filter_name: str) -> bool:
+        """Check whether the selected FFmpeg build exposes a specific filter."""
+
+        cache_key = (ffmpeg_path, filter_name)
+        if cache_key in self._ffmpeg_filter_cache:
+            return self._ffmpeg_filter_cache[cache_key]
+
+        available = False
+        try:
+            result = subprocess.run(
+                [ffmpeg_path, "-hide_banner", "-filters"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                available = re.search(rf"\s{re.escape(filter_name)}\s", result.stdout) is not None
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError):
+            available = False
+
+        self._ffmpeg_filter_cache[cache_key] = available
+        return available
     
     def _check_encoder_usability(self, ffmpeg_path: str, encoder: str) -> bool:
         """Check if an encoder is actually usable on the system."""
