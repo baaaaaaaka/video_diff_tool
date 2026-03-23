@@ -167,6 +167,7 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ needs.prepare.outputs.release_tag }}"
+          repo="${GITHUB_REPOSITORY}"
           mapfile -d '' assets < <(find release-assets -type f -name '*.zip' -print0 | sort -z)
 
           if [[ "${#assets[@]}" -eq 0 ]]; then
@@ -174,8 +175,8 @@ jobs:
             exit 1
           fi
 
-          if gh release view "${tag}" >/dev/null 2>&1; then
-            gh release upload "${tag}" "${assets[@]}" --clobber
+          if gh release view "${tag}" --repo "${repo}" >/dev/null 2>&1; then
+            gh release upload "${tag}" "${assets[@]}" --repo "${repo}" --clobber
           else
-            gh release create "${tag}" "${assets[@]}" --title "${tag}" --generate-notes
+            gh release create "${tag}" "${assets[@]}" --repo "${repo}" --title "${tag}" --generate-notes
           fi
