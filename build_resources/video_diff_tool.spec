@@ -3,12 +3,13 @@
 # To build:
 # pyinstaller video_diff_tool.spec
 
-import sys
-import os
-from PyInstaller.utils.hooks import collect_all
+from pathlib import Path
 
 # Analyze the project structure
 block_cipher = None
+spec_dir = Path(__file__).resolve().parent
+project_root = spec_dir.parent
+assets_dir = spec_dir / "assets"
 
 # Collect any additional data files if needed
 datas = []
@@ -17,8 +18,8 @@ hiddenimports = []
 
 # Add all source files
 a = Analysis(
-    ['../main.py'],
-    pathex=[],
+    [str(project_root / 'main.py')],
+    pathex=[str(project_root)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -50,7 +51,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='assets/logo.ico',
+    icon=str(assets_dir / 'logo.ico'),
 )
 
 coll = COLLECT(
@@ -67,7 +68,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='VideoDiffTool.app',
-    icon='assets/logo.ico',
+    icon=str(assets_dir / 'logo.ico'),
     bundle_identifier='com.videodifftool.app',
     info_plist={
         'NSDesktopFolderUsageDescription': 'Video Diff Tool needs access to the Desktop to save screenshots.',
@@ -75,4 +76,3 @@ app = BUNDLE(
         'NSHighResolutionCapable': 'True'
     },
 )
-

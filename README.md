@@ -81,6 +81,16 @@ brew install ffmpeg
 python main.py
 ```
 
+## Releasing
+
+Push a semantic version tag such as `v1.3.0` to trigger the GitHub release workflow.
+
+- **macOS**: Builds on `macos-14` and publishes a `macos-arm64` zip
+- **Windows**: Builds on `windows-latest` and publishes a `windows-x64` zip
+- **Release Guard**: The workflow checks that the tag version matches the About dialog version string before publishing
+
+You can also rerun the release flow manually with **Actions → Release → Run workflow** and provide an existing tag.
+
 ### Basic Workflow
 
 1. **Add Videos**: Drag and drop video files into the Left and Right video zones, or click "Browse..."
