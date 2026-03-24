@@ -68,6 +68,54 @@ def test_install_packages_uses_current_python_and_handles_failure(monkeypatch):
     assert manager.install_packages(["brokenpkg"]) is False
 
 
+def test_check_dependencies_uses_pkg_resources_when_available(tmp_path, monkeypatch):
+    requirements_path = tmp_path / "requirements.txt"
+    requirements_path.write_text("demo>=1.0\noldpkg>=5.0\n", encoding="utf-8")
+
+    class FakeParsedRequirement:
+        def __init__(self, project_name: str, specs: list[tuple[str, str]], satisfied: bool):
+            self.project_name = project_name
+            self.specs = specs
+            self._satisfied = satisfied
+
+        def __contains__(self, dist):
+            return self._satisfied
+
+    class FakePkgResources:
+        class DistributionNotFound(Exception):
+            pass
+
+        @staticmethod
+        def parse_requirements(req: str):
+            if req.startswith("demo"):
+                return [FakeParsedRequirement("demo", [(">=", "1.0")], True)]
+            return [FakeParsedRequirement("oldpkg", [(">=", "5.0")], False)]
+
+        @staticmethod
+        def get_distribution(package_name: str):
+            return object()
+
+    monkeypatch.setattr(dependency_manager_module, "pkg_resources", FakePkgResources)
+
+    manager = DependencyManager(requirements_path)
+    missing, installed = manager.check_dependencies()
+
+    assert missing == ["oldpkg>=5.0"]
+    assert installed == ["demo>=1.0"]
+
+
+def test_install_packages_handles_empty_list_and_unexpected_exception(monkeypatch):
+    manager = DependencyManager(Path("requirements.txt"))
+    assert manager.install_packages([]) is True
+
+    monkeypatch.setattr(
+        dependency_manager_module.subprocess,
+        "check_call",
+        lambda cmd: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    assert manager.install_packages(["demo"]) is False
+
+
 def test_check_and_install_dependencies_exits_on_failed_install(tmp_path, monkeypatch):
     project_root = tmp_path / "project"
     src_dir = project_root / "src"
@@ -84,3 +132,27 @@ def test_check_and_install_dependencies_exits_on_failed_install(tmp_path, monkey
         check_and_install_dependencies()
 
     assert excinfo.value.code == 1
+
+
+def test_check_and_install_dependencies_handles_success_and_missing_requirements(tmp_path, monkeypatch, capsys):
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src"
+    src_dir.mkdir(parents=True)
+    requirements_path = project_root / "requirements.txt"
+    requirements_path.write_text("pytest\n", encoding="utf-8")
+
+    monkeypatch.setattr(dependency_manager_module, "__file__", str(src_dir / "dependency_manager.py"))
+    monkeypatch.setattr(DependencyManager, "check_dependencies", lambda self: (["pytest"], []))
+    monkeypatch.setattr(DependencyManager, "install_packages", lambda self, packages: True)
+
+    check_and_install_dependencies()
+    assert "Please restart the application" in capsys.readouterr().out
+
+    missing_project_root = tmp_path / "missing_project"
+    missing_src_dir = missing_project_root / "src"
+    missing_src_dir.mkdir(parents=True)
+    monkeypatch.setattr(dependency_manager_module, "__file__", str(missing_src_dir / "dependency_manager.py"))
+    monkeypatch.chdir(tmp_path)
+
+    check_and_install_dependencies()
+    assert "Warning: requirements.txt not found. Skipping dependency check." in capsys.readouterr().out

@@ -1,8 +1,10 @@
 """Unit tests for release versioning and update selection."""
 
 import io
+import json
 import sys
 from pathlib import Path, PurePosixPath
+from urllib.error import HTTPError
 
 from src.update_manager import (
     ReleaseInfo,
@@ -272,3 +274,71 @@ def test_prepare_windows_update_writes_script_and_launches_helper(tmp_path, monk
     assert f'$sourceDir = "{source_dir}"' in script_content
     assert f'$targetDir = "{executable.parent}"' in script_content
     assert popen_calls and popen_calls[0][0][0] == "powershell"
+
+
+def test_get_release_asset_suffix_and_fetch_release_errors(monkeypatch):
+    manager = UpdateManager()
+    monkeypatch.setattr(manager, "system", "Darwin")
+    monkeypatch.setattr(manager, "machine", "arm64")
+    assert manager.get_release_asset_suffix() == "-macos-arm64.zip"
+
+    monkeypatch.setattr(
+        "src.update_manager.urlopen",
+        lambda request, timeout=10: (_ for _ in ()).throw(
+            HTTPError(request.full_url, 500, "boom", hdrs=None, fp=None)
+        ),
+    )
+    try:
+        manager._fetch_releases()
+        assert False, "Expected RuntimeError for HTTP failures"
+    except RuntimeError as exc:
+        assert "Failed to check GitHub releases" in str(exc)
+
+
+def test_find_asset_and_prepare_update_error_paths(tmp_path, monkeypatch):
+    manager = UpdateManager()
+    assert manager._find_asset([{"name": "foo.zip"}], "-windows-x64.zip") is None
+
+    archive_path = tmp_path / "update.zip"
+    archive_path.write_text("placeholder", encoding="utf-8")
+
+    monkeypatch.setattr(manager, "supports_auto_update", lambda: False)
+    try:
+        manager.prepare_update_and_restart(archive_path)
+        assert False, "Expected RuntimeError when auto update is unsupported"
+    except RuntimeError as exc:
+        assert "Automatic updates are only supported" in str(exc)
+
+
+def test_prepare_platform_update_errors_for_missing_payload_or_permissions(tmp_path, monkeypatch):
+    manager = UpdateManager()
+
+    missing_extract = tmp_path / "missing_extract"
+    try:
+        manager._prepare_macos_update(missing_extract)
+        assert False, "Expected RuntimeError for missing macOS app"
+    except RuntimeError as exc:
+        assert "does not contain VideoDiffTool.app" in str(exc)
+
+    mac_extract = tmp_path / "mac_extract"
+    source_app = mac_extract / "VideoDiffTool.app"
+    source_app.mkdir(parents=True)
+    executable = tmp_path / "Applications" / "VideoDiffTool.app" / "Contents" / "MacOS" / "VideoDiffTool"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(sys, "executable", str(executable))
+    monkeypatch.setattr("src.update_manager.os.access", lambda path, mode: False)
+    try:
+        manager._prepare_macos_update(mac_extract)
+        assert False, "Expected RuntimeError for macOS permission failure"
+    except RuntimeError as exc:
+        assert "Cannot write to" in str(exc)
+
+    win_extract = tmp_path / "win_extract"
+    win_source_dir = win_extract / "VideoDiffTool"
+    win_source_dir.mkdir(parents=True)
+    try:
+        manager._prepare_windows_update(win_extract)
+        assert False, "Expected RuntimeError for missing Windows exe"
+    except RuntimeError as exc:
+        assert "does not contain VideoDiffTool.exe" in str(exc)
