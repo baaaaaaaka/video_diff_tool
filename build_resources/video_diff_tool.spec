@@ -4,6 +4,7 @@
 # pyinstaller video_diff_tool.spec
 
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_dynamic_libs, collect_submodules, copy_metadata
 
 # Analyze the project structure
 block_cipher = None
@@ -11,10 +12,10 @@ spec_dir = Path(globals().get("SPECPATH", Path.cwd() / "build_resources")).resol
 project_root = spec_dir.parent
 assets_dir = spec_dir / "assets"
 
-# Collect any additional data files if needed
-datas = []
-binaries = []
-hiddenimports = []
+# Collect PyAV explicitly so packaged builds do not rely on implicit hooks only.
+datas = copy_metadata("av")
+binaries = collect_dynamic_libs("av")
+hiddenimports = collect_submodules("av")
 
 # Add all source files
 a = Analysis(

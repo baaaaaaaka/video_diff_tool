@@ -12,6 +12,7 @@ from src.binary_finder import get_binary_finder
 from src.ffmpeg_encoder import FFmpegEncoder
 from src.mpv_launcher import MPVLauncher
 from src.settings import get_settings
+from src.video_validator import VideoValidator
 
 
 def _require_binary(name: str) -> str:
@@ -208,3 +209,20 @@ def test_mpv_filter_smoke_standard_and_debug(tmp_path):
         timeout=60,
     )
     assert debug_result.returncode == 0, debug_result.stderr
+
+
+@pytest.mark.smoke
+def test_video_validator_smoke_prefers_pyav(tmp_path):
+    ffmpeg_path = _require_binary("ffmpeg")
+    left_video, _ = _make_standard_videos(tmp_path, ffmpeg_path)
+
+    validator = VideoValidator()
+    if VideoValidator.BACKEND_PYAV not in validator.get_available_metadata_backends():
+        pytest.skip("PyAV is not available")
+
+    info = validator.get_video_info(str(left_video), preferred_backend=VideoValidator.BACKEND_PYAV)
+
+    assert info is not None
+    assert info.width == 320
+    assert info.height == 180
+    assert info.codec in {"h264", "libx264"}

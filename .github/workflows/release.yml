@@ -186,14 +186,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          brew install ffmpeg
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt pyinstaller pillow
+          python -m pip install -r requirements.txt av==17.0.0 pyinstaller pillow
 
       - name: Build app bundle
         shell: bash
         run: |
           set -euo pipefail
           pyinstaller --clean --noconfirm "${SPEC_PATH}"
+
+      - name: Smoke test macOS bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          ffmpeg -y -f lavfi -i color=c=black:s=320x180:r=2:d=1 sample.mp4
+          "dist/${APP_NAME}.app/Contents/MacOS/${APP_NAME}" --smoke-check --smoke-video sample.mp4
 
       - name: Package macOS artifact
         shell: bash
@@ -231,13 +239,20 @@ jobs:
       - name: Install build dependencies
         shell: pwsh
         run: |
+          choco install ffmpeg -y --no-progress
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt pyinstaller
+          python -m pip install -r requirements.txt av==17.0.0 pyinstaller
 
       - name: Build app bundle
         shell: pwsh
         run: |
           pyinstaller --clean --noconfirm "${env:SPEC_PATH}"
+
+      - name: Smoke test Windows bundle
+        shell: pwsh
+        run: |
+          ffmpeg -y -f lavfi -i color=c=black:s=320x180:r=2:d=1 sample.mp4
+          & "dist/${env:APP_NAME}/${env:APP_NAME}.exe" --smoke-check --smoke-video sample.mp4
 
       - name: Package Windows artifact
         shell: pwsh

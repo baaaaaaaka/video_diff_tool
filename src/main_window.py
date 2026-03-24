@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional
 import threading
 import subprocess
+from dataclasses import dataclass
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -29,6 +30,22 @@ from .comparison_mode import (
 from .widgets.video_drop_zone import VideoDropZone
 from .widgets.encoding_dialog import EncodingDialog
 from .widgets.settings_dialog import SettingsDialog
+
+
+@dataclass(frozen=True)
+class PreviewRequest:
+    """Immutable preview launch snapshot."""
+
+    video_left: str
+    video_right: str
+    video_third: Optional[str]
+    title_left: str
+    title_right: str
+    title_third: Optional[str]
+    show_titles: bool
+    fullscreen: bool
+    comparison_mode: str
+    debug_view: str
 
 
 class UpdateCheckWorker(QThread):
@@ -76,6 +93,35 @@ class UpdateDownloadWorker(QThread):
         self.finished_download.emit(str(archive_path))
 
 
+class PreviewValidationWorker(QThread):
+    """Background worker for debug preview validation."""
+
+    finished_validation = pyqtSignal(int, bool, str)
+    failed_validation = pyqtSignal(int, str)
+
+    def __init__(self, request_id: int, validator, video_left: str, video_right: str):
+        super().__init__()
+        self.request_id = request_id
+        self.validator = validator
+        self.video_left = video_left
+        self.video_right = video_right
+
+    def run(self) -> None:
+        try:
+            valid, error, _ = self.validator.validate_videos_for_debug_view(
+                self.video_left,
+                self.video_right,
+            )
+        except RuntimeError as exc:
+            self.failed_validation.emit(self.request_id, str(exc))
+            return
+        except Exception as exc:
+            self.failed_validation.emit(self.request_id, str(exc))
+            return
+
+        self.finished_validation.emit(self.request_id, valid, error)
+
+
 class MainWindow(QMainWindow):
     """Main application window."""
     
@@ -93,6 +139,11 @@ class MainWindow(QMainWindow):
         self._update_download_worker: Optional[UpdateDownloadWorker] = None
         self._update_progress_dialog: Optional[QProgressDialog] = None
         self._pending_release: Optional[ReleaseInfo] = None
+        self._preview_validation_worker: Optional[PreviewValidationWorker] = None
+        self._preview_validation_workers: list[PreviewValidationWorker] = []
+        self._preview_validation_in_flight = False
+        self._preview_validation_generation = 0
+        self._pending_preview_request: Optional[PreviewRequest] = None
         
         # Connect error signal
         self.mpv_error_signal.connect(self._show_mpv_error)
@@ -249,7 +300,7 @@ class MainWindow(QMainWindow):
         for option in get_debug_view_options():
             self.debug_view_combo.addItem(option["name"], option["id"])
         self.debug_view_combo.currentIndexChanged.connect(self._on_debug_view_changed)
-        self.debug_view_combo.setToolTip("Choose which 2160p debug quadrant to compare.")
+        self.debug_view_combo.setToolTip("Choose which 1920x1080 panel from the 3840x2160 debug render to compare.")
         mode_controls_layout.addWidget(self.debug_view_combo)
         mode_controls_layout.addStretch()
 
@@ -566,8 +617,10 @@ class MainWindow(QMainWindow):
     
     def _on_video_changed(self, path: str):
         """Handle video path change."""
+        self._invalidate_preview_validation()
         self._update_buttons()
         self._update_layout_preview()
+        self._schedule_debug_prewarm()
 
     def _on_title_changed(self, title: str):
         """Handle title change."""
@@ -575,16 +628,21 @@ class MainWindow(QMainWindow):
 
     def _on_comparison_mode_changed(self, index: int):
         """Handle comparison mode change."""
+        self._invalidate_preview_validation()
         self._update_mode_controls()
         self._update_buttons()
         self._update_layout_preview()
+        self._schedule_debug_prewarm()
 
     def _on_debug_view_changed(self, index: int):
         """Handle debug panel change."""
+        self._invalidate_preview_validation()
         self._update_layout_preview()
+        self._schedule_debug_prewarm()
     
     def _on_third_video_toggle(self, state: int):
         """Handle third video checkbox toggle."""
+        self._invalidate_preview_validation()
         self._update_mode_controls()
         self._update_buttons()
         self._update_layout_preview()
@@ -599,7 +657,13 @@ class MainWindow(QMainWindow):
         ffmpeg_available = bool(self.finder.find_ffmpeg(self.settings.get("ffmpeg_path")))
         font_available = bool(self.finder.find_font(self.settings.get("font_path")))
         
-        can_preview = has_left and has_right and mpv_available and font_available
+        can_preview = (
+            has_left
+            and has_right
+            and mpv_available
+            and font_available
+            and not self._preview_validation_in_flight
+        )
         can_encode = has_left and has_right and ffmpeg_available and font_available
         
         self.preview_btn.setEnabled(can_preview)
@@ -859,49 +923,163 @@ class MainWindow(QMainWindow):
             f"{error}\n\n{advice}"
         )
 
+    def _invalidate_preview_validation(self) -> None:
+        """Mark any in-flight debug preview validation result as stale."""
+        self._preview_validation_generation += 1
+        self._pending_preview_request = None
+        if self._preview_validation_in_flight:
+            self._set_preview_preparing(False)
+
+    def _set_preview_preparing(self, active: bool) -> None:
+        """Toggle preview UI state while debug validation is running."""
+        self._preview_validation_in_flight = active
+        if active:
+            self.preview_btn.setText("Preparing Preview...")
+            self.status_bar.showMessage("Preparing Debug View preview...")
+        else:
+            self.preview_btn.setText("Preview with MPV")
+            self._update_status()
+        self._update_buttons()
+
+    def _schedule_debug_prewarm(self) -> None:
+        """Warm metadata cache in the background after input changes."""
+        if not self._is_debug_view_mode():
+            return
+
+        video_left = self.video_left.get_video_path()
+        video_right = self.video_right.get_video_path()
+        if not video_left or not video_right:
+            return
+
+        threading.Thread(
+            target=self.validator.prewarm_video_infos,
+            args=([video_left, video_right],),
+            daemon=True,
+        ).start()
+
+    def _build_preview_request(self) -> PreviewRequest:
+        """Capture current preview options so async validation does not race UI changes."""
+        comparison_mode = self.comparison_mode_combo.currentData()
+        debug_mode = self._is_debug_view_mode()
+        video_third = None
+        if not debug_mode and self.enable_third_cb.isChecked() and self.video_third.get_video_path():
+            video_third = self.video_third.get_video_path()
+
+        return PreviewRequest(
+            video_left=self.video_left.get_video_path(),
+            video_right=self.video_right.get_video_path(),
+            video_third=video_third,
+            title_left=self.video_left.get_title(),
+            title_right=self.video_right.get_title(),
+            title_third=self.video_third.get_title() if video_third else None,
+            show_titles=self.show_titles_cb.isChecked(),
+            fullscreen=self.fullscreen_cb.isChecked(),
+            comparison_mode=comparison_mode,
+            debug_view=self.debug_view_combo.currentData(),
+        )
+
+    def _start_debug_preview_validation(self, request: PreviewRequest) -> None:
+        """Run debug preview validation in the background before launching MPV."""
+        if self._preview_validation_in_flight:
+            return
+
+        request_id = self._preview_validation_generation + 1
+        self._preview_validation_generation = request_id
+        self._pending_preview_request = request
+        self._set_preview_preparing(True)
+
+        worker = PreviewValidationWorker(
+            request_id=request_id,
+            validator=self.validator,
+            video_left=request.video_left,
+            video_right=request.video_right,
+        )
+        worker.finished_validation.connect(self._on_preview_validation_finished)
+        worker.failed_validation.connect(self._on_preview_validation_failed)
+        worker.finished.connect(lambda worker=worker: self._on_preview_validation_worker_finished(worker))
+        self._preview_validation_worker = worker
+        self._preview_validation_workers.append(worker)
+        worker.start()
+
+    def _on_preview_validation_worker_finished(self, worker: PreviewValidationWorker) -> None:
+        """Drop finished worker references to avoid leaking QThreads."""
+        if self._preview_validation_worker is worker:
+            self._preview_validation_worker = None
+        if worker in self._preview_validation_workers:
+            self._preview_validation_workers.remove(worker)
+
+    def _take_completed_preview_request(self, request_id: int) -> Optional[PreviewRequest]:
+        """Reset UI state and return the request only if it is still current."""
+        if request_id != self._preview_validation_generation:
+            return None
+
+        request = self._pending_preview_request
+        self._pending_preview_request = None
+        self._set_preview_preparing(False)
+        return request
+
+    def _on_preview_validation_finished(self, request_id: int, valid: bool, error: str) -> None:
+        """Handle a completed debug preview validation."""
+        request = self._take_completed_preview_request(request_id)
+        if request is None:
+            return
+
+        if not valid:
+            QMessageBox.critical(self, "Debug View Validation Failed", error)
+            return
+
+        try:
+            self._launch_mpv_request(request)
+        except RuntimeError as exc:
+            QMessageBox.critical(
+                self,
+                "MPV Launch Failed",
+                f"Failed to launch MPV: {exc}\n\nPlease check your MPV installation in Settings.",
+            )
+
+    def _on_preview_validation_failed(self, request_id: int, error: str) -> None:
+        """Handle unexpected debug preview preparation failures."""
+        request = self._take_completed_preview_request(request_id)
+        if request is None:
+            return
+
+        QMessageBox.critical(self, "Preview Preparation Failed", error)
+
+    def _launch_mpv_request(self, request: PreviewRequest) -> None:
+        """Launch MPV using a previously captured request snapshot."""
+        proc = self.mpv_launcher.launch(
+            video_left=request.video_left,
+            video_right=request.video_right,
+            video_third=request.video_third,
+            title_left=request.title_left,
+            title_right=request.title_right,
+            title_third=request.title_third,
+            show_titles=request.show_titles,
+            fullscreen=request.fullscreen,
+            comparison_mode=request.comparison_mode,
+            debug_view=request.debug_view,
+        )
+
+        # Monitor process in background thread
+        threading.Thread(
+            target=self._monitor_mpv_process,
+            args=(proc,),
+            daemon=True,
+        ).start()
+
     def _launch_mpv(self):
         """Launch MPV preview."""
         try:
-            comparison_mode = self.comparison_mode_combo.currentData()
-            debug_view = self.debug_view_combo.currentData()
-            debug_mode = self._is_debug_view_mode()
-            video_third = None
-            if not debug_mode and self.enable_third_cb.isChecked() and self.video_third.get_video_path():
-                video_third = self.video_third.get_video_path()
+            request = self._build_preview_request()
+            if is_debug_view_mode(request.comparison_mode):
+                self._start_debug_preview_validation(request)
+                return
 
-            if debug_mode:
-                valid, error, _ = self.validator.validate_videos_for_debug_view(
-                    self.video_left.get_video_path(),
-                    self.video_right.get_video_path(),
-                )
-                if not valid:
-                    QMessageBox.critical(self, "Validation Error", error)
-                    return
-            
-            proc = self.mpv_launcher.launch(
-                video_left=self.video_left.get_video_path(),
-                video_right=self.video_right.get_video_path(),
-                video_third=video_third,
-                title_left=self.video_left.get_title(),
-                title_right=self.video_right.get_title(),
-                title_third=self.video_third.get_title() if video_third else None,
-                show_titles=self.show_titles_cb.isChecked(),
-                fullscreen=self.fullscreen_cb.isChecked(),
-                comparison_mode=comparison_mode,
-                debug_view=debug_view,
-            )
-            
-            # Monitor process in background thread
-            threading.Thread(
-                target=self._monitor_mpv_process, 
-                args=(proc,), 
-                daemon=True
-            ).start()
-            
+            self._launch_mpv_request(request)
         except RuntimeError as e:
             QMessageBox.critical(
                 self,
-                "Error",
+                "MPV Launch Failed",
                 f"Failed to launch MPV: {e}\n\nPlease check your MPV installation in Settings."
             )
     
@@ -958,5 +1136,8 @@ class MainWindow(QMainWindow):
     
     def closeEvent(self, event):
         """Handle close event."""
+        for worker in list(self._preview_validation_workers):
+            if worker.isRunning():
+                worker.wait(5000)
         self._save_settings()
         event.accept()

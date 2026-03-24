@@ -128,15 +128,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          brew install ffmpeg
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt pyinstaller pillow
+          python -m pip install -r requirements.txt av==17.0.0 pyinstaller pillow
 
       - name: Install Windows build dependencies
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
+          choco install ffmpeg -y --no-progress
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt pyinstaller
+          python -m pip install -r requirements.txt av==17.0.0 pyinstaller
 
       - name: Build packaged app on macOS
         if: matrix.os == 'macos-14'
@@ -158,6 +160,14 @@ jobs:
           set -euo pipefail
           test -d "dist/VideoDiffTool.app"
 
+      - name: Smoke test packaged macOS bundle
+        if: matrix.os == 'macos-14'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ffmpeg -y -f lavfi -i color=c=black:s=320x180:r=2:d=1 sample.mp4
+          "dist/VideoDiffTool.app/Contents/MacOS/VideoDiffTool" --smoke-check --smoke-video sample.mp4
+
       - name: Verify Windows bundle
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -165,3 +175,10 @@ jobs:
           if (-not (Test-Path "dist/VideoDiffTool/VideoDiffTool.exe")) {
             throw "Expected packaged executable at dist/VideoDiffTool/VideoDiffTool.exe"
           }
+
+      - name: Smoke test packaged Windows bundle
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          ffmpeg -y -f lavfi -i color=c=black:s=320x180:r=2:d=1 sample.mp4
+          & "dist/VideoDiffTool/VideoDiffTool.exe" --smoke-check --smoke-video sample.mp4

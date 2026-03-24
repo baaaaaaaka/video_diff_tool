@@ -29,6 +29,18 @@ def _build_encoder(tmp_path: Path, monkeypatch) -> FFmpegEncoder:
     monkeypatch.setattr(encoder.finder, "has_ffmpeg_filter", lambda ffmpeg_path, filter_name: True)
     monkeypatch.setattr(
         encoder.validator,
+        "get_video_infos",
+        lambda video_paths, preferred_backend="auto", require_consistent_backend=True: {
+            name: _video_info(
+                path,
+                3840 if "debug" in path else 1920,
+                2160 if "debug" in path else 1080,
+            )
+            for name, path in video_paths.items()
+        },
+    )
+    monkeypatch.setattr(
+        encoder.validator,
         "get_video_info",
         lambda path: _video_info(
             path,
@@ -90,6 +102,49 @@ def test_build_encoding_command_skips_drawtext_when_filter_is_unavailable(tmp_pa
     assert "drawtext=" not in filter_complex
 
 
+def test_get_available_encoders_filters_unsupported_hw_entries(tmp_path, monkeypatch):
+    encoder = _build_encoder(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        encoder.finder,
+        "get_available_hw_encoders",
+        lambda ffmpeg_path: [
+            {"id": "hevc_nvenc", "name": "NVENC"},
+            {"id": "hevc_qsv", "name": "QSV"},
+        ],
+    )
+
+    encoders = encoder.get_available_encoders()
+
+    assert encoders == [
+        {"id": "cpu", "name": "CPU (libx264 H.264 4:4:4)"},
+        {"id": "hevc_nvenc", "name": "NVENC"},
+    ]
+
+
+def test_build_filter_complex_supports_third_video_layout(tmp_path, monkeypatch):
+    encoder = _build_encoder(tmp_path, monkeypatch)
+
+    filter_complex = encoder.build_filter_complex(
+        video_infos={
+            "left": _video_info("left.mp4"),
+            "right": _video_info("right.mp4"),
+            "third": _video_info("third.mp4"),
+        },
+        output_width=3840,
+        output_height=2160,
+        title_left="Candidate",
+        title_right="Baseline",
+        title_third="Third",
+        font_path=str(tmp_path / "font.ttf"),
+        has_third_video=True,
+        comparison_mode="standard",
+    )
+
+    assert "[2:v]" in filter_complex
+    assert "[blended][third]hstack[down]" in filter_complex
+    assert "drawtext=" in filter_complex
+
+
 def test_resolve_encoder_auto_prefers_nvenc_and_status_uses_validated_binary(tmp_path, monkeypatch):
     encoder = _build_encoder(tmp_path, monkeypatch)
     monkeypatch.setattr(
@@ -105,6 +160,22 @@ def test_resolve_encoder_auto_prefers_nvenc_and_status_uses_validated_binary(tmp
     assert encoder.normalize_encoder_id("cpu_h264_444") == "cpu"
     assert encoder._resolve_encoder("auto") == "hevc_nvenc"
     assert encoder.get_ffmpeg_status() == (True, "FFmpeg found: ffmpeg 7.0")
+
+
+def test_title_overlay_warning_and_status_error_paths(tmp_path, monkeypatch):
+    encoder = _build_encoder(tmp_path, monkeypatch)
+
+    assert encoder._get_title_overlay_warning("/usr/bin/ffmpeg", str(tmp_path / "font.ttf"), "", "", "", False) is None
+    monkeypatch.setattr(encoder.finder, "has_ffmpeg_filter", lambda ffmpeg_path, filter_name: False)
+    assert "drawtext" in encoder._get_title_overlay_warning("/usr/bin/ffmpeg", str(tmp_path / "font.ttf"), "L", "", "", False)
+
+    monkeypatch.setattr(encoder.finder, "has_ffmpeg_filter", lambda ffmpeg_path, filter_name: True)
+    assert "No font file" in encoder._get_title_overlay_warning("/usr/bin/ffmpeg", None, "L", "", "", False)
+
+    monkeypatch.setattr(encoder.finder, "validate_binary", lambda path, binary: (False, "broken"))
+    assert encoder.get_ffmpeg_status() == (False, "FFmpeg invalid: broken")
+    monkeypatch.setattr(encoder.finder, "find_ffmpeg", lambda custom_path="": None)
+    assert encoder.get_ffmpeg_status() == (False, "FFmpeg not found")
 
 
 def test_encode_reports_progress_and_success(tmp_path, monkeypatch):
@@ -141,6 +212,49 @@ def test_encode_reports_progress_and_success(tmp_path, monkeypatch):
     assert progress_updates and progress_updates[0].frame == 5
     assert progress_updates[0].percent == 50.0
     assert any("Encoding completed successfully!" in line for line in logs)
+
+
+def test_encode_returns_false_on_validation_error_and_subprocess_exception(tmp_path, monkeypatch):
+    encoder = _build_encoder(tmp_path, monkeypatch)
+    logs = []
+    monkeypatch.setattr(
+        encoder.validator,
+        "validate_videos_for_comparison",
+        lambda left, right, third: (False, "bad inputs", None),
+    )
+
+    success = encoder.encode(
+        video_left="left.mp4",
+        video_right="right.mp4",
+        output_path=str(tmp_path / "out.mp4"),
+        encoder="cpu",
+        log_callback=logs.append,
+    )
+
+    assert success is False
+    assert any("ERROR: bad inputs" in line for line in logs)
+
+    monkeypatch.setattr(
+        encoder.validator,
+        "validate_videos_for_comparison",
+        lambda left, right, third: (True, "", {"left": _video_info(left)}),
+    )
+    monkeypatch.setattr(
+        "src.ffmpeg_encoder.subprocess.Popen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("spawn failed")),
+    )
+
+    logs.clear()
+    success = encoder.encode(
+        video_left="left.mp4",
+        video_right="right.mp4",
+        output_path=str(tmp_path / "out.mp4"),
+        encoder="cpu",
+        log_callback=logs.append,
+    )
+
+    assert success is False
+    assert any("spawn failed" in line for line in logs)
 
 
 def test_encode_can_be_cancelled_and_kills_process(tmp_path, monkeypatch):
@@ -208,3 +322,18 @@ def test_parse_progress_handles_invalid_lines_and_windows_kill(monkeypatch):
 
     assert process.terminated is True
     assert process.waited is True
+
+
+def test_build_encoding_command_rejects_unsupported_encoder(tmp_path, monkeypatch):
+    encoder = _build_encoder(tmp_path, monkeypatch)
+
+    try:
+        encoder.build_encoding_command(
+            video_left="left.mp4",
+            video_right="right.mp4",
+            output_path="out.mp4",
+            encoder="hevc_qsv",
+        )
+        assert False, "Expected unsupported encoder to raise"
+    except RuntimeError as exc:
+        assert "does not support the required yuv444p output" in str(exc)

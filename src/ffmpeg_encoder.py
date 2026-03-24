@@ -278,11 +278,14 @@ class FFmpegEncoder:
         if has_third:
             videos_to_check["third"] = video_third
         
-        video_infos = {}
-        for name, path in videos_to_check.items():
-            info = self.validator.get_video_info(path)
-            if info:
-                video_infos[name] = info
+        video_infos = {
+            name: info
+            for name, info in self.validator.get_video_infos(
+                videos_to_check,
+                require_consistent_backend=True,
+            ).items()
+            if info is not None
+        }
         
         # Build filter complex
         filter_complex = self.build_filter_complex(

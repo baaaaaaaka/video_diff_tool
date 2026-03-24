@@ -13,7 +13,8 @@ A cross-platform GUI tool for comparing videos side-by-side with difference visu
 
 - **FFmpeg Encoding**: Encode comparison videos with H.264 4:4:4 output, or HEVC 4:4:4 via NVENC when available
 - **Optional Third Video**: Add a third video to the bottom-right quadrant
-- **Debug View Mode**: Crop 4K debug videos down to `Display Image`, `Flow`, `Mask`, or `Warped` panels before preview and encoding
+- **Debug View Mode**: Compare one `1920x1080` panel from a `3840x2160` debug render in `Display Image`, `Flow`, `Mask`, or `Warped` mode
+- **Fast Metadata Probing**: Prefer in-process `PyAV` metadata reads and fall back to `ffprobe` when needed
 - **In-App Updates**: Packaged macOS and Windows builds can detect newer GitHub releases, update in place, and restart automatically
 - **Drag & Drop**: Easy video file selection with drag and drop support
 - **Customizable Titles**: Add custom overlay titles to each video
@@ -42,6 +43,11 @@ A cross-platform GUI tool for comparing videos side-by-side with difference visu
 ### Python Dependencies
 ```bash
 pip install -r requirements.txt
+```
+
+Optional for faster Debug View metadata probing:
+```bash
+pip install av==17.0.0
 ```
 
 ### Developer Test Dependencies
@@ -118,7 +124,7 @@ GitHub Actions runs:
 
 1. **Add Videos**: Drag and drop video files into the Left and Right video zones, or click "Browse..."
 2. **Set Titles**: Enter custom titles for each video (optional)
-3. **Preview**: Click "Preview with MPV" to see the comparison in real-time
+3. **Preview**: Click "Preview with MPV" to see the comparison in real-time. In `Debug View`, the button may briefly switch to `Preparing Preview...` while the input layout is validated in the background.
 4. **Encode**: Click "Encode with FFmpeg" to create an encoded comparison video
 
 ### Debug View Mode
@@ -127,7 +133,7 @@ GitHub Actions runs:
 2. Choose one debug panel: **Display Image**, **Flow**, **Mask**, or **Warped**
 3. Preview or encode to compare that cropped panel side-by-side with a difference view
 
-Debug View mode expects both inputs to be `3840x2160` debug renders with the standard 2x2 panel layout.
+Debug View expects `3840x2160` debug renders and compares one `1920x1080` panel from the standard 2x2 layout.
 
 ### Enable Third Video
 
@@ -185,6 +191,15 @@ Access settings via **File → Settings** to configure:
 ### "Frame count mismatch"
 - All input videos must have the same number of frames
 - Use videos from the same source/render for best results
+
+### "Debug View Validation Failed"
+- Debug View requires both inputs to have the same frame count and the same `3840x2160` layout
+- The app validates this before launching MPV, so the preview button may briefly show `Preparing Preview...`
+
+### Metadata probing and `ffprobe`
+- The app now prefers an in-process `PyAV` metadata reader for faster debug preview preparation
+- If `PyAV` cannot read a file, the validator falls back to `ffprobe`
+- If preview preparation fails on one machine but not another, make sure `ffprobe` is installed and reachable on `PATH`
 
 ## License
 

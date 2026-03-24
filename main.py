@@ -12,6 +12,54 @@ from pathlib import Path
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
+def run_smoke_check(argv: list[str]) -> int | None:
+    """Run a lightweight packaged-runtime smoke check and exit."""
+    if "--smoke-check" not in argv:
+        return None
+
+    smoke_video = None
+    if "--smoke-video" in argv:
+        video_index = argv.index("--smoke-video") + 1
+        if video_index >= len(argv):
+            print("smoke-check error: --smoke-video requires a path")
+            return 1
+        smoke_video = argv[video_index]
+
+    try:
+        import av
+        from src.video_validator import VideoValidator
+    except ImportError as exc:
+        print(f"smoke-check error: failed to import runtime dependencies: {exc}")
+        return 1
+
+    validator = VideoValidator()
+    print(f"smoke-check: av {av.__version__}")
+    print(f"smoke-check: backends {', '.join(validator.get_available_metadata_backends())}")
+
+    if smoke_video:
+        try:
+            info = validator.get_video_info(smoke_video, preferred_backend=VideoValidator.BACKEND_PYAV)
+        except RuntimeError as exc:
+            print(f"smoke-check error: {exc}")
+            return 1
+
+        if info is None:
+            print(f"smoke-check error: failed to read {smoke_video} with PyAV")
+            return 1
+
+        print(
+            "smoke-check: "
+            f"{Path(smoke_video).name} {info.width}x{info.height} "
+            f"{info.frame_count}f {info.codec}"
+        )
+
+    return 0
+
+
+smoke_check_exit_code = run_smoke_check(sys.argv[1:])
+if smoke_check_exit_code is not None:
+    sys.exit(smoke_check_exit_code)
+
 # Check dependencies BEFORE importing PyQt6
 # Skip dependency check if running as a frozen application (binary)
 if not getattr(sys, 'frozen', False):
