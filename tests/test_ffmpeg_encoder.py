@@ -150,6 +150,7 @@ def test_encode_can_be_cancelled_and_kills_process(tmp_path, monkeypatch):
         "validate_videos_for_comparison",
         lambda left, right, third: (True, "", {"left": _video_info(left)}),
     )
+    monkeypatch.setattr("src.ffmpeg_encoder.platform.system", lambda: "Linux")
 
     class DummyProcess:
         def __init__(self):
