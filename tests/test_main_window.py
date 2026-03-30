@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PyQt6.QtWidgets import QMessageBox, QDialog
+from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog
 
 from src.binary_finder import BinaryFinder
 from src.main_window import MainWindow
@@ -548,6 +548,7 @@ def test_update_download_finished_and_mpv_monitoring(qtbot, monkeypatch, tmp_pat
     window = _build_window(qtbot, monkeypatch, tmp_path)
     window._update_progress_dialog = FakeProgressDialog()
 
+    app = QApplication.instance()
     prepared_archives = []
     info_messages = []
     timer_calls = []
@@ -560,11 +561,11 @@ def test_update_download_finished_and_mpv_monitoring(qtbot, monkeypatch, tmp_pat
     )
     monkeypatch.setattr(
         "src.main_window.QMessageBox.information",
-        lambda parent, title, text: info_messages.append((title, text)),
+        lambda *args: info_messages.append(args),
     )
     monkeypatch.setattr(
         "src.main_window.QTimer.singleShot",
-        lambda delay, callback: timer_calls.append(delay),
+        lambda delay, callback: timer_calls.append((delay, callback)),
     )
     window.mpv_error_signal.disconnect()
     window.mpv_error_signal.connect(lambda error, advice: mpv_errors.append((error, advice)))
@@ -572,8 +573,12 @@ def test_update_download_finished_and_mpv_monitoring(qtbot, monkeypatch, tmp_pat
     window._on_update_download_finished(str(tmp_path / "update.zip"))
 
     assert prepared_archives == [tmp_path / "update.zip"]
-    assert info_messages[-1][0] == "Restarting"
-    assert timer_calls == [0]
+    assert window.isHidden()
+    assert info_messages == []
+    assert len(timer_calls) == 1
+    assert timer_calls[0][0] == 0
+    assert timer_calls[0][1].__self__ is app
+    assert timer_calls[0][1].__name__ == "quit"
     assert window._update_progress_dialog is None
 
     class FailedProcess:

@@ -869,12 +869,12 @@ class MainWindow(QMainWindow):
             self._on_update_download_failed(str(exc))
             return
 
-        QMessageBox.information(
-            self,
-            "Restarting",
-            "The update has been downloaded. The application will now restart to finish installing it.",
-        )
-        QTimer.singleShot(0, QApplication.instance().quit)
+        # The external helper waits for this process to exit before replacing
+        # the install directory, so avoid any modal confirmation here.
+        self.hide()
+        app = QApplication.instance()
+        if app is not None:
+            QTimer.singleShot(0, app.quit)
 
     def _on_update_download_failed(self, error: str):
         """Handle update download failures."""
